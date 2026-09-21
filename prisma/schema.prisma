@@ -1,0 +1,926 @@
+// Prisma schema — BigHawk business management app.
+// Models are grouped by module. Later phases append their models below.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Users, roles & authentication (BetterAuth-managed tables + app roles)
+// ---------------------------------------------------------------------------
+
+enum PermissionModule {
+  CUSTOMERS
+  SALES
+  PROCUREMENT
+  PROJECTS
+  FINANCE
+  USERS
+  SETTINGS
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  name                String
+  email               String    @unique
+  emailVerified       Boolean   @default(false)
+  image               String?
+  phone               String?
+  isActive            Boolean   @default(true)
+  // Exactly one Super Admin exists; enforced by a partial unique index in the migration.
+  isSuperAdmin        Boolean   @default(false)
+  // Login security (Settings → Security): lockout after repeated failed sign-ins.
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  roleId              String?
+  role                Role?     @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  sessions      Session[]
+  accounts      Account[]
+  notifications Notification[]
+
+  @@index([roleId])
+  @@index([isActive])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  name        String           @unique
+  description String?
+  // Preset roles ship with the app and cannot be deleted.
+  isSystem    Boolean          @default(false)
+  permissions RolePermission[]
+  users       User[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+// One row per role + module with the four allowed actions.
+model RolePermission {
+  id        String           @id @default(cuid())
+  roleId    String
+  role      Role             @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  module    PermissionModule
+  canView   Boolean          @default(false)
+  canCreate Boolean          @default(false)
+  canEdit   Boolean          @default(false)
+  canDelete Boolean          @default(false)
+
+  @@unique([roleId, module])
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+enum DocumentType {
+  QUOTATION
+  INVOICE
+  PURCHASE
+  EXPENSE
+  PAYMENT
+  PROJECT
+  SUPPLIER_QUOTATION
+  INCOME
+}
+
+enum PaymentAccountType {
+  COMPANY_BANK
+  CASH
+  OTHER_BANK
+}
+
+enum NotificationType {
+  INVOICE_OVERDUE
+  INVOICE_DUE_SOON
+  SUPPLIER_PAYMENT_DUE
+  CUSTOMER_PAYMENT_RECEIVED
+  QUOTATION_ACCEPTED
+  NEW_USER_CREATED
+}
+
+enum EmailTemplateKey {
+  QUOTATION
+  INVOICE
+  PAYMENT_REMINDER
+  SUPPLIER_PAYMENT_REMINDER
+  NEW_USER
+}
+
+enum PdfHeaderStyle {
+  STANDARD
+  CENTERED
+  MINIMAL
+}
+
+enum PdfFont {
+  HELVETICA
+  TIMES
+  COURIER
+}
+
+// Single row (id = "default"): company identity reused across the app, PDFs and emails.
+model CompanySettings {
+  id                String   @id @default("default")
+  companyName       String   @default("")
+  logoUrl           String?
+  crNumber          String?
+  vatNumber         String?
+  address           String?
+  phone             String?
+  email             String?
+  website           String?
+  nationalAddress   String?
+  bankName          String?
+  accountName       String?
+  iban              String?
+  accountNumber     String?
+  description       String?
+  additionalContact String?
+  updatedAt         DateTime @updatedAt
+}
+
+// Single row (id = "default"): outgoing email (SMTP) — Super Admin only.
+// Kept out of AppSettings because that row is sent to client components; the password never is.
+model EmailSettings {
+  id        String   @id @default("default")
+  host      String   @default("")
+  port      Int      @default(587)
+  secure    Boolean  @default(false)
+  username  String   @default("")
+  password  String   @default("")
+  fromEmail String   @default("")
+  fromName  String   @default("")
+  replyTo   String   @default("")
+  updatedAt DateTime @updatedAt
+}
+
+// Single row (id = "default"): every non-company setting section.
+model AppSettings {
+  id String @id @default("default")
+
+  // VAT
+  vatEnabled     Boolean @default(true)
+  defaultVatRate Decimal @default(15) @db.Decimal(5, 2)
+  allowVatChange Boolean @default(true)
+
+  // Payment terms (0 days = due immediately)
+  defaultPaymentTermDays  Int     @default(30)
+  defaultDepositPercent   Decimal @default(0) @db.Decimal(5, 2)
+  defaultRemainingDueDays Int     @default(30)
+
+  // Date & regional (currency is always SAR)
+  dateFormat   String @default("DD/MM/YYYY")
+  timeZone     String @default("Asia/Riyadh")
+  numberFormat String @default("1,234.56")
+
+  // Document & email styling
+  primaryColor   String         @default("#0f766e")
+  secondaryColor String         @default("#64748b")
+  pdfFont        PdfFont        @default(HELVETICA)
+  pdfHeaderStyle PdfHeaderStyle @default(STANDARD)
+  pdfFooterText  String         @default("")
+  emailSignature String         @default("")
+  quotationTerms String         @default("")
+  invoiceTerms   String         @default("")
+
+  // Notifications
+  invoiceDueSoonDays      Int       @default(3)
+  lastNotificationSweepAt DateTime?
+
+  // Security
+  sessionTimeoutMinutes    Int     @default(720)
+  passwordMinLength        Int     @default(8)
+  passwordRequireNumber    Boolean @default(true)
+  passwordRequireUppercase Boolean @default(false)
+  maxLoginAttempts         Int     @default(5)
+  lockoutMinutes           Int     @default(15)
+
+  updatedAt DateTime @updatedAt
+}
+
+// Concurrency-safe document numbering, one row per document type.
+model DocumentSequence {
+  id             String       @id @default(cuid())
+  type           DocumentType @unique
+  prefix         String
+  startingNumber Int          @default(1)
+  nextNumber     Int          @default(1)
+  includeYear    Boolean      @default(true)
+  // Year the counter currently belongs to when includeYear is on (resets on a new year).
+  currentYear    Int?
+  updatedAt      DateTime     @updatedAt
+}
+
+model PaymentAccount {
+  id               String             @id @default(cuid())
+  name             String
+  type             PaymentAccountType
+  openingBalance   Decimal            @default(0) @db.Decimal(14, 2)
+  isActive         Boolean            @default(true)
+  notes            String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  invoicePayments  InvoicePayment[]
+  purchasePayments PurchasePayment[]
+  otherIncomes     OtherIncome[]
+  expenses         Expense[]
+
+  @@index([isActive])
+}
+
+model NotificationSetting {
+  id               String           @id @default(cuid())
+  type             NotificationType @unique
+  enabled          Boolean          @default(true)
+  inApp            Boolean          @default(true)
+  email            Boolean          @default(false)
+  recipientUserIds String[]         @default([])
+  updatedAt        DateTime         @updatedAt
+}
+
+model EmailTemplate {
+  id        String           @id @default(cuid())
+  key       EmailTemplateKey @unique
+  subject   String
+  body      String
+  updatedAt DateTime         @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Customers & Suppliers
+// ---------------------------------------------------------------------------
+
+enum PartyType {
+  COMPANY
+  INDIVIDUAL
+}
+
+enum PartyDocumentCategory {
+  VAT_CERTIFICATE
+  CR_CERTIFICATE
+  BANK_CERTIFICATE
+  NATIONAL_ADDRESS
+  OTHER
+}
+
+model Customer {
+  id              String    @id @default(cuid())
+  type            PartyType @default(COMPANY)
+  // Company name or the individual's full name.
+  name            String
+  contactPerson   String?
+  phone           String
+  email           String?
+  address         String?
+  vatNumber       String?
+  crNumber        String?
+  nationalAddress String?
+  bankName        String?
+  accountName     String?
+  iban            String?
+  accountNumber   String?
+  notes           String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  documents  CustomerDocument[]
+  quotations Quotation[]
+  invoices   Invoice[]
+  purchases  Purchase[]
+  projects   Project[]
+
+  @@index([name])
+  @@index([email])
+  @@index([phone])
+  @@index([type])
+}
+
+model CustomerDocument {
+  id           String                @id @default(cuid())
+  customerId   String
+  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  category     PartyDocumentCategory @default(OTHER)
+  name         String
+  fileKey      String
+  mimeType     String
+  size         Int
+  uploadedById String?
+  createdAt    DateTime              @default(now())
+
+  @@index([customerId])
+}
+
+model Supplier {
+  id              String    @id @default(cuid())
+  type            PartyType @default(COMPANY)
+  name            String
+  contactPerson   String?
+  phone           String
+  email           String?
+  address         String?
+  vatNumber       String?
+  crNumber        String?
+  nationalAddress String?
+  bankName        String?
+  accountName     String?
+  iban            String?
+  accountNumber   String?
+  notes           String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  documents          SupplierDocument[]
+  supplierQuotations SupplierQuotation[]
+  purchases          Purchase[]
+
+  @@index([name])
+  @@index([email])
+  @@index([phone])
+  @@index([type])
+}
+
+model SupplierDocument {
+  id           String                @id @default(cuid())
+  supplierId   String
+  supplier     Supplier              @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  category     PartyDocumentCategory @default(OTHER)
+  name         String
+  fileKey      String
+  mimeType     String
+  size         Int
+  uploadedById String?
+  createdAt    DateTime              @default(now())
+
+  @@index([supplierId])
+}
+
+// ---------------------------------------------------------------------------
+// Sales: quotations → invoices → payments
+// ---------------------------------------------------------------------------
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+}
+
+model Quotation {
+  id         String          @id @default(cuid())
+  number     String          @unique
+  customerId String
+  customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  date       DateTime        @db.Date
+  validUntil DateTime?       @db.Date
+  status     QuotationStatus @default(DRAFT)
+
+  // Totals are computed server-side from the items and stored for listing/reporting.
+  subtotal      Decimal @default(0) @db.Decimal(14, 2)
+  discountTotal Decimal @default(0) @db.Decimal(14, 2)
+  vatTotal      Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal    Decimal @default(0) @db.Decimal(14, 2)
+
+  terms       String?
+  projectId   String?
+  project     Project?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sentAt      DateTime?
+  decidedAt   DateTime?
+  // Set when converted; an accepted quotation converts to exactly one invoice.
+  invoice     Invoice?
+  items       QuotationItem[]
+  attachments QuotationAttachment[]
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@index([projectId])
+  @@index([date])
+}
+
+model QuotationItem {
+  id              String    @id @default(cuid())
+  quotationId     String
+  quotation       Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  sortOrder       Int       @default(0)
+  description     String
+  quantity        Decimal   @db.Decimal(12, 2)
+  unitPrice       Decimal   @db.Decimal(14, 2)
+  discountPercent Decimal   @default(0) @db.Decimal(5, 2)
+  vatRate         Decimal   @default(0) @db.Decimal(5, 2)
+  lineSubtotal    Decimal   @db.Decimal(14, 2)
+  lineDiscount    Decimal   @db.Decimal(14, 2)
+  lineVat         Decimal   @db.Decimal(14, 2)
+  lineTotal       Decimal   @db.Decimal(14, 2)
+
+  @@index([quotationId])
+}
+
+model QuotationAttachment {
+  id          String    @id @default(cuid())
+  quotationId String
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  name        String
+  fileKey     String
+  mimeType    String
+  size        Int
+  createdAt   DateTime  @default(now())
+
+  @@index([quotationId])
+}
+
+model Invoice {
+  id          String        @id @default(cuid())
+  number      String        @unique
+  customerId  String
+  customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  quotationId String?       @unique
+  quotation   Quotation?    @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  date        DateTime      @db.Date
+  status      InvoiceStatus @default(DRAFT)
+
+  // Payment terms. With a deposit, the deposit is due on the invoice date and the rest on dueDate.
+  paymentTermDays Int
+  dueDate         DateTime @db.Date
+  depositPercent  Decimal  @default(0) @db.Decimal(5, 2)
+  depositAmount   Decimal  @default(0) @db.Decimal(14, 2)
+
+  subtotal      Decimal @default(0) @db.Decimal(14, 2)
+  discountTotal Decimal @default(0) @db.Decimal(14, 2)
+  vatTotal      Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal    Decimal @default(0) @db.Decimal(14, 2)
+  paidTotal     Decimal @default(0) @db.Decimal(14, 2)
+
+  terms         String?
+  projectId     String?
+  project       Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  // Never shown to the customer.
+  internalNotes String?
+  sentAt        DateTime?
+
+  items       InvoiceItem[]
+  attachments InvoiceAttachment[]
+  payments    InvoicePayment[]
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@index([date])
+  @@index([projectId])
+  @@index([dueDate])
+}
+
+model InvoiceItem {
+  id              String  @id @default(cuid())
+  invoiceId       String
+  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  sortOrder       Int     @default(0)
+  description     String
+  quantity        Decimal @db.Decimal(12, 2)
+  unitPrice       Decimal @db.Decimal(14, 2)
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  vatRate         Decimal @default(0) @db.Decimal(5, 2)
+  lineSubtotal    Decimal @db.Decimal(14, 2)
+  lineDiscount    Decimal @db.Decimal(14, 2)
+  lineVat         Decimal @db.Decimal(14, 2)
+  lineTotal       Decimal @db.Decimal(14, 2)
+
+  @@index([invoiceId])
+}
+
+model InvoiceAttachment {
+  id        String   @id @default(cuid())
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  name      String
+  fileKey   String
+  mimeType  String
+  size      Int
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId])
+}
+
+// Money received against an invoice. Never deleted; increases the chosen payment account.
+model InvoicePayment {
+  id               String         @id @default(cuid())
+  number           String         @unique
+  invoiceId        String
+  invoice          Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  amount           Decimal        @db.Decimal(14, 2)
+  date             DateTime       @db.Date
+  paymentAccountId String
+  paymentAccount   PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  reference        String?
+  notes            String?
+  createdById      String?
+  createdAt        DateTime       @default(now())
+
+  @@index([invoiceId])
+  @@index([paymentAccountId])
+  @@index([date])
+}
+
+// ---------------------------------------------------------------------------
+// Procurement: supplier quotations → purchases → supplier payments
+// ---------------------------------------------------------------------------
+
+enum SupplierQuotationStatus {
+  DRAFT
+  RECEIVED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum PurchaseStatus {
+  DRAFT
+  RECEIVED
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+}
+
+model SupplierQuotation {
+  id                String                  @id @default(cuid())
+  number            String                  @unique
+  supplierId        String
+  supplier          Supplier                @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  supplierReference String?
+  date              DateTime                @db.Date
+  validUntil        DateTime?               @db.Date
+  status            SupplierQuotationStatus @default(DRAFT)
+
+  subtotal      Decimal @default(0) @db.Decimal(14, 2)
+  discountTotal Decimal @default(0) @db.Decimal(14, 2)
+  vatTotal      Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal    Decimal @default(0) @db.Decimal(14, 2)
+
+  // Internal only.
+  notes       String?
+  receivedAt  DateTime?
+  decidedAt   DateTime?
+  purchase    Purchase?
+  items       SupplierQuotationItem[]
+  attachments SupplierQuotationAttachment[]
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([date])
+}
+
+model SupplierQuotationItem {
+  id                  String            @id @default(cuid())
+  supplierQuotationId String
+  supplierQuotation   SupplierQuotation @relation(fields: [supplierQuotationId], references: [id], onDelete: Cascade)
+  sortOrder           Int               @default(0)
+  description         String
+  quantity            Decimal           @db.Decimal(12, 2)
+  unitPrice           Decimal           @db.Decimal(14, 2)
+  discountPercent     Decimal           @default(0) @db.Decimal(5, 2)
+  vatRate             Decimal           @default(0) @db.Decimal(5, 2)
+  lineSubtotal        Decimal           @db.Decimal(14, 2)
+  lineDiscount        Decimal           @db.Decimal(14, 2)
+  lineVat             Decimal           @db.Decimal(14, 2)
+  lineTotal           Decimal           @db.Decimal(14, 2)
+
+  @@index([supplierQuotationId])
+}
+
+model SupplierQuotationAttachment {
+  id                  String            @id @default(cuid())
+  supplierQuotationId String
+  supplierQuotation   SupplierQuotation @relation(fields: [supplierQuotationId], references: [id], onDelete: Cascade)
+  name                String
+  fileKey             String
+  mimeType            String
+  size                Int
+  createdAt           DateTime          @default(now())
+
+  @@index([supplierQuotationId])
+}
+
+model Purchase {
+  id                  String             @id @default(cuid())
+  number              String             @unique
+  supplierId          String
+  supplier            Supplier           @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  supplierQuotationId String?            @unique
+  supplierQuotation   SupplierQuotation? @relation(fields: [supplierQuotationId], references: [id], onDelete: SetNull)
+  // Supplier invoice / reference number. Once present, a received purchase is "Unpaid" (payment expected).
+  supplierReference   String?
+  // Optional links: a purchase can be for a customer and/or a project (relation added with the Projects module).
+  customerId          String?
+  customer            Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  projectId           String?
+  project             Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  date                DateTime           @db.Date
+  status              PurchaseStatus     @default(DRAFT)
+
+  paymentTermDays Int
+  dueDate         DateTime @db.Date
+
+  subtotal      Decimal @default(0) @db.Decimal(14, 2)
+  discountTotal Decimal @default(0) @db.Decimal(14, 2)
+  vatTotal      Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal    Decimal @default(0) @db.Decimal(14, 2)
+  paidTotal     Decimal @default(0) @db.Decimal(14, 2)
+
+  notes      String?
+  receivedAt DateTime?
+
+  items       PurchaseItem[]
+  attachments PurchaseAttachment[]
+  payments    PurchasePayment[]
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([supplierId])
+  @@index([customerId])
+  @@index([projectId])
+  @@index([status])
+  @@index([date])
+  @@index([dueDate])
+}
+
+model PurchaseItem {
+  id              String   @id @default(cuid())
+  purchaseId      String
+  purchase        Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  sortOrder       Int      @default(0)
+  description     String
+  quantity        Decimal  @db.Decimal(12, 2)
+  unitPrice       Decimal  @db.Decimal(14, 2)
+  discountPercent Decimal  @default(0) @db.Decimal(5, 2)
+  vatRate         Decimal  @default(0) @db.Decimal(5, 2)
+  lineSubtotal    Decimal  @db.Decimal(14, 2)
+  lineDiscount    Decimal  @db.Decimal(14, 2)
+  lineVat         Decimal  @db.Decimal(14, 2)
+  lineTotal       Decimal  @db.Decimal(14, 2)
+
+  @@index([purchaseId])
+}
+
+model PurchaseAttachment {
+  id         String   @id @default(cuid())
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  name       String
+  fileKey    String
+  mimeType   String
+  size       Int
+  createdAt  DateTime @default(now())
+
+  @@index([purchaseId])
+}
+
+// Money paid to a supplier against a purchase. Never deleted; decreases the chosen payment account.
+model PurchasePayment {
+  id               String         @id @default(cuid())
+  number           String         @unique
+  purchaseId       String
+  purchase         Purchase       @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  amount           Decimal        @db.Decimal(14, 2)
+  date             DateTime       @db.Date
+  paymentAccountId String
+  paymentAccount   PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  reference        String?
+  notes            String?
+  createdById      String?
+  createdAt        DateTime       @default(now())
+
+  @@index([purchaseId])
+  @@index([paymentAccountId])
+  @@index([date])
+}
+
+// ---------------------------------------------------------------------------
+// Projects (simple: no tasks, no kanban)
+// ---------------------------------------------------------------------------
+
+enum ProjectType {
+  IT_INFRASTRUCTURE
+  SOFTWARE_DEVELOPMENT
+  OTHER
+}
+
+enum ProjectStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+}
+
+model Project {
+  id                     String        @id @default(cuid())
+  code                   String        @unique
+  customerId             String
+  customer               Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  name                   String
+  type                   ProjectType   @default(IT_INFRASTRUCTURE)
+  startDate              DateTime      @db.Date
+  expectedCompletionDate DateTime?     @db.Date
+  value                  Decimal       @db.Decimal(14, 2)
+  status                 ProjectStatus @default(NOT_STARTED)
+  notes                  String?
+
+  documents  ProjectDocument[]
+  quotations Quotation[]
+  invoices   Invoice[]
+  purchases  Purchase[]
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@index([name])
+}
+
+model ProjectDocument {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name         String
+  fileKey      String
+  mimeType     String
+  size         Int
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------------------
+// Finance: other income, general expenses (customer/supplier payments live with their documents)
+// ---------------------------------------------------------------------------
+
+enum FinanceCategoryKind {
+  INCOME
+  EXPENSE
+}
+
+model FinanceCategory {
+  id        String              @id @default(cuid())
+  kind      FinanceCategoryKind
+  name      String
+  isDefault Boolean             @default(false)
+  isActive  Boolean             @default(true)
+  createdAt DateTime            @default(now())
+
+  incomes  OtherIncome[]
+  expenses Expense[]
+
+  @@unique([kind, name])
+}
+
+// Money received that is not a customer invoice payment. Increases the chosen account.
+model OtherIncome {
+  id               String          @id @default(cuid())
+  number           String          @unique
+  categoryId       String
+  category         FinanceCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  amount           Decimal         @db.Decimal(14, 2)
+  date             DateTime        @db.Date
+  paymentAccountId String
+  paymentAccount   PaymentAccount  @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  description      String?
+  attachmentName   String?
+  attachmentKey    String?
+  attachmentType   String?
+  attachmentSize   Int?
+  createdById      String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([date])
+  @@index([categoryId])
+  @@index([paymentAccountId])
+}
+
+// Company expense that is not a supplier purchase payment. Decreases the chosen account.
+model Expense {
+  id               String          @id @default(cuid())
+  number           String          @unique
+  categoryId       String
+  category         FinanceCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  amount           Decimal         @db.Decimal(14, 2)
+  date             DateTime        @db.Date
+  paymentAccountId String
+  paymentAccount   PaymentAccount  @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  description      String?
+  attachmentName   String?
+  attachmentKey    String?
+  attachmentType   String?
+  attachmentSize   Int?
+  createdById      String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([date])
+  @@index([categoryId])
+  @@index([paymentAccountId])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+// Remembers time-based events already notified (e.g. "invoice X is overdue") so they fire once.
+model NotificationEvent {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  createdAt DateTime @default(now())
+}
