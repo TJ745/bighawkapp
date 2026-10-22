@@ -10,7 +10,7 @@ type Grant = [PermissionModule, { view: boolean; create: boolean; edit: boolean;
 const ALL = { view: true, create: true, edit: true, delete: true };
 const VIEW = { view: true, create: false, edit: false, delete: false };
 const WORK = { view: true, create: true, edit: true, delete: false };
-const MODULES: PermissionModule[] = ["CUSTOMERS", "SALES", "PROCUREMENT", "PROJECTS", "FINANCE", "USERS", "SETTINGS"];
+const MODULES: PermissionModule[] = ["CUSTOMERS", "SALES", "PROCUREMENT", "PROJECTS", "FINANCE", "USERS", "SETTINGS", "POS", "INVENTORY"];
 
 // Preset roles. Admins can adjust these later from Users & Roles.
 const PRESET_ROLES: { name: string; description: string; grants: Grant[] }[] = [
@@ -45,6 +45,37 @@ const PRESET_ROLES: { name: string; description: string; grants: Grant[] }[] = [
     grants: [
       ["PROCUREMENT", WORK],
       ["CUSTOMERS", VIEW],
+      ["PROJECTS", VIEW],
+    ],
+  },
+  {
+    name: "Stock Keeper",
+    description: "Maintains the catalogue and stock levels.",
+    grants: [
+      ["INVENTORY", ALL],
+      ["PROCUREMENT", VIEW],
+    ],
+  },
+  {
+    name: "Cashier",
+    description: "Sells at the register and looks up customers.",
+    grants: [
+      ["POS", WORK],
+      ["CUSTOMERS", WORK],
+      // A cashier sells from the catalogue but does not maintain it.
+      ["INVENTORY", VIEW],
+    ],
+  },
+  {
+    name: "Branch Manager",
+    description: "Runs a branch: register, stock, purchases and reports.",
+    grants: [
+      ["POS", ALL],
+      ["INVENTORY", ALL],
+      ["CUSTOMERS", WORK],
+      ["SALES", WORK],
+      ["PROCUREMENT", WORK],
+      ["FINANCE", VIEW],
       ["PROJECTS", VIEW],
     ],
   },
@@ -111,8 +142,42 @@ async function seedSuperAdmin() {
   console.log(`Super Admin created: ${user.email}`);
 }
 
+/**
+ * Module rows and the first branch. Business Management is on so an existing company keeps
+ * working; POS is off until the BigHawk Super Admin enables it in Settings → Modules.
+ */
+async function seedPlatform() {
+  for (const [module, enabled] of [
+    ["BUSINESS_MANAGEMENT", true],
+    ["POS", false],
+  ] as const) {
+    await db.moduleSetting.upsert({
+      where: { module },
+      update: {},
+      create: { module, enabled, enabledAt: enabled ? new Date() : null },
+    });
+  }
+
+  if ((await db.branch.count()) === 0) {
+    const company = await db.companySettings.findUnique({ where: { id: "default" } });
+    await db.branch.create({
+      data: {
+        code: "MAIN",
+        name: company?.companyName?.trim() || "Main Branch",
+        phone: company?.phone ?? null,
+        address: company?.address ?? null,
+        vatNumber: company?.vatNumber ?? null,
+        isDefault: true,
+      },
+    });
+    console.log("Default branch created (MAIN).");
+  }
+  console.log("Modules ready (Business Management on, POS off).");
+}
+
 async function main() {
   await seedRoles();
+  await seedPlatform();
   await seedSuperAdmin();
 }
 

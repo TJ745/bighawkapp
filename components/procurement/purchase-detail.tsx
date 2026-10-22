@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, Eye, Inbox, Pencil, Wallet } from "lucide-react";
+import { ArrowLeft, Download, Eye, Inbox, PackagePlus, Pencil, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +16,8 @@ import { RecordPaymentDialog, type PaymentAccountOption } from "@/components/doc
 import { markPurchaseReceived, recordPurchasePayment } from "@/actions/purchases";
 import { PURCHASE_STATUS } from "@/lib/business/procurement-status";
 import type { PurchaseDetail } from "@/lib/data/procurement";
+import type { PurchaseReceiptRow } from "@/lib/data/receiving";
+import { ReceiveDialog, type ReceivableItemOption, type ReceivableLineView } from "./receive-dialog";
 
 type Props = {
   purchase: PurchaseDetail;
@@ -23,13 +25,34 @@ type Props = {
   showVat: boolean;
   accounts: PaymentAccountOption[];
   today: string;
+  /** Receiving goods needs the POS module and inventory rights, so the page says whether it may. */
+  canReceive: boolean;
+  receivable: ReceivableLineView[];
+  receivableItems: ReceivableItemOption[];
+  branches: { id: string; name: string }[];
+  currentBranchId: string | null;
+  receipts: PurchaseReceiptRow[];
 };
 
-export function PurchaseDetailView({ purchase: p, canEdit, showVat, accounts, today }: Props) {
+export function PurchaseDetailView({
+  purchase: p,
+  canEdit,
+  showVat,
+  accounts,
+  today,
+  canReceive,
+  receivable,
+  receivableItems,
+  branches,
+  currentBranchId,
+  receipts,
+}: Props) {
   const router = useRouter();
   const format = useFormat();
   const [payOpen, setPayOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
+  const [goodsOpen, setGoodsOpen] = useState(false);
+  const outstanding = receivable.filter((line) => line.outstandingQuantity > 0);
   const status = PURCHASE_STATUS[p.status];
   const pdfUrl = `/api/procurement/purchases/${p.id}/pdf`;
 
@@ -94,6 +117,12 @@ export function PurchaseDetailView({ purchase: p, canEdit, showVat, accounts, to
                 <Pencil />
                 Edit
               </Link>
+            </Button>
+          ) : null}
+          {canReceive && outstanding.length > 0 ? (
+            <Button variant="outline" onClick={() => setGoodsOpen(true)}>
+              <PackagePlus />
+              Receive goods
             </Button>
           ) : null}
           {canEdit && !p.receivedAt ? (
@@ -197,6 +226,57 @@ export function PurchaseDetailView({ purchase: p, canEdit, showVat, accounts, to
         direction="paid"
         record={(values) => recordPurchasePayment(p.id, values)}
       />
+      {receipts.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Deliveries</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">Receipt</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="hidden sm:table-cell">Into</TableHead>
+                  <TableHead className="hidden md:table-cell">What arrived</TableHead>
+                  <TableHead className="pr-6 text-right">At cost</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {receipts.map((receipt) => (
+                  <TableRow key={receipt.id}>
+                    <TableCell className="pl-6 font-medium">
+                      {receipt.number}
+                      {receipt.status === "CANCELLED" ? <span className="ml-2 text-xs text-muted-foreground">cancelled</span> : null}
+                    </TableCell>
+                    <TableCell>{format.date(receipt.date)}</TableCell>
+                    <TableCell className="hidden text-muted-foreground sm:table-cell">{receipt.branchName}</TableCell>
+                    <TableCell className="hidden max-w-72 truncate text-muted-foreground md:table-cell">
+                      {receipt.lines.map((line) => `${format.number(line.quantity)} × ${line.name}`).join(", ")}
+                    </TableCell>
+                    <TableCell className="pr-6 text-right font-medium tabular-nums">
+                      {receipt.status === "CANCELLED" ? "—" : format.money(receipt.value)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <ReceiveDialog
+        open={goodsOpen}
+        onOpenChange={setGoodsOpen}
+        purchaseId={p.id}
+        purchaseNumber={p.number}
+        lines={receivable}
+        items={receivableItems}
+        branches={branches}
+        currentBranchId={currentBranchId}
+        today={today}
+      />
+
       <ConfirmDialog
         open={receiveOpen}
         onOpenChange={setReceiveOpen}

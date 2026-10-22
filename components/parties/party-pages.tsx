@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/shared/page-header";
-import { CustomerInvoicesTab, CustomerPaymentsTab, CustomerQuotationsTab } from "@/components/sales/customer-tabs";
+import { CustomerAdvancesTab, CustomerInvoicesTab, CustomerPaymentsTab, CustomerQuotationsTab } from "@/components/sales/customer-tabs";
 import { SupplierPaymentsTab, SupplierPurchasesTab, SupplierQuotationsTab } from "@/components/procurement/supplier-tabs";
 import { CustomerProjectsTab } from "@/components/projects/project-tabs";
 import type { PermissionModule } from "@/lib/generated/prisma/enums";
@@ -70,6 +70,7 @@ export async function PartyDetailPage({ kind, id, searchParams }: { kind: PartyK
           quotations: <CustomerQuotationsTab customerId={party.id} canCreate={auth.can("SALES", "create")} canEdit={auth.can("SALES", "edit")} />,
           sales: <CustomerInvoicesTab customerId={party.id} canCreate={auth.can("SALES", "create")} canEdit={auth.can("SALES", "edit")} />,
           payments: <CustomerPaymentsTab customerId={party.id} />,
+          advances: <CustomerAdvancesTab customerId={party.id} customerName={party.name} auth={auth} />,
         }
       : kind === "supplier"
         ? {

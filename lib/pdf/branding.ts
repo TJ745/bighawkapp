@@ -1,12 +1,13 @@
 import "server-only";
 import { cache } from "react";
-import { getAppSettings, getCompanySettings } from "@/lib/data/settings";
+import { getAppSettings, getCompanySettings, isZatcaActive } from "@/lib/data/settings";
 import { readStoredFile } from "@/lib/storage";
+import { sellerAddressLines } from "@/lib/zatca/seller";
 import type { PdfBranding } from "./document-pdf";
 
 /** Branding for PDFs, assembled from Settings → Company and Settings → Document & Email Styling. */
 export const getPdfBranding = cache(async (): Promise<PdfBranding> => {
-  const [company, settings] = await Promise.all([getCompanySettings(), getAppSettings()]);
+  const [company, settings, zatca] = await Promise.all([getCompanySettings(), getAppSettings(), isZatcaActive()]);
   const logoKey = company.logoUrl?.startsWith("/api/files/") ? company.logoUrl.slice("/api/files/".length) : null;
   const logo = logoKey ? await readStoredFile(logoKey) : null;
 
@@ -27,6 +28,14 @@ export const getPdfBranding = cache(async (): Promise<PdfBranding> => {
     font: settings.pdfFont,
     headerStyle: settings.pdfHeaderStyle,
     footerText: settings.pdfFooterText,
+    // Null unless e-invoicing is on, which is what leaves every other document untouched. The
+    // action that switches it on has already checked these fields are filled in.
+    arabic: zatca
+      ? {
+          companyName: company.companyNameAr?.trim() || company.companyName.trim(),
+          addressLines: company.addressAr?.trim() ? [company.addressAr.trim()] : sellerAddressLines(company),
+        }
+      : null,
   };
 });
 

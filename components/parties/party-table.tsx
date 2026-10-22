@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ListToolbar } from "@/components/shared/list-toolbar";
+import { ExportButton } from "@/components/shared/export-button";
+import { exportCustomers, exportSuppliers } from "@/actions/export";
 import { Pagination } from "@/components/shared/pagination";
 import { StatusMenu } from "@/components/shared/status-menu";
 import { useFormat } from "@/components/providers/format-provider";
@@ -30,6 +32,7 @@ export function PartyTable({ kind, items, total, page, hasQuery, canCreate, canE
   return (
     <div className="space-y-4">
       <ListToolbar filters={PARTY_FILTERS} searchPlaceholder="Search by name, phone or email">
+        <ExportButton action={kind === "customer" ? exportCustomers : exportSuppliers} />
         {canCreate ? (
           <Button asChild>
             <Link href={`${config.basePath}/new`}>

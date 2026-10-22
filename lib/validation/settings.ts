@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DocumentType, NotificationType, PaymentAccountType, PdfFont, PdfHeaderStyle, EmailTemplateKey } from "@/lib/generated/prisma/enums";
+import { DocumentType, NotificationType, PaymentAccountType, PdfFont, PdfHeaderStyle, EmailTemplateKey, ZatcaMode } from "@/lib/generated/prisma/enums";
 import { DATE_FORMATS, NUMBER_FORMATS, SESSION_TIMEOUT_OPTIONS } from "@/lib/settings/defaults";
 
 const text = (max: number) =>
@@ -40,6 +40,33 @@ export const companySettingsSchema = z.object({
   accountNumber: text(50),
   description: text(1000),
   additionalContact: text(500),
+
+  // ZATCA seller identity. Optional here — the e-invoicing screen is what refuses to switch on
+  // until they are filled in, so a company can still save its details a field at a time.
+  companyNameAr: text(150),
+  addressAr: text(500),
+  buildingNumber: text(10),
+  streetName: text(150),
+  district: text(150),
+  city: text(100),
+  postalCode: text(10),
+  additionalNumber: text(10),
+  region: text(100),
+  countryCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .length(2, "Use a two-letter country code, such as SA")
+    .optional()
+    .transform((v) => v || "SA"),
+});
+
+/**
+ * Saudi e-invoicing. The mode is the only thing to set in Phase 1; whether it *may* be set is
+ * decided by the action, which checks the company's seller details first.
+ */
+export const zatcaSettingsSchema = z.object({
+  mode: z.enum(ZatcaMode),
 });
 
 export const documentNumberingSchema = z.object({
@@ -108,13 +135,38 @@ export const stylingSettingsSchema = z.object({
   invoiceTerms: z.string().trim().max(5000).default(""),
 });
 
+/**
+ * Placeholders a template cannot do without.
+ *
+ * Most templates read oddly if a placeholder is dropped; the reset email stops working altogether,
+ * silently, for everyone — the recipient gets a message with no way to act on it. So that one
+ * placeholder is required rather than merely offered.
+ */
+const REQUIRED_PLACEHOLDERS: Partial<Record<EmailTemplateKey, { token: string; why: string }>> = {
+  PASSWORD_RESET: { token: "reset_url", why: "without it the email contains no reset link" },
+};
+
 export const emailTemplatesSchema = z.object({
   templates: z.array(
-    z.object({
-      key: z.enum(EmailTemplateKey),
-      subject: requiredText(200, "Subject is required"),
-      body: requiredText(5000, "Body is required"),
-    }),
+    z
+      .object({
+        key: z.enum(EmailTemplateKey),
+        subject: requiredText(200, "Subject is required"),
+        body: requiredText(5000, "Body is required"),
+      })
+      .superRefine((template, ctx) => {
+        const required = REQUIRED_PLACEHOLDERS[template.key];
+        if (!required) return;
+        // Matched the way the renderer matches: any spacing, any case.
+        const pattern = new RegExp(`\\{\\{\\s*${required.token}\\s*\\}\\}`, "i");
+        if (!pattern.test(template.body)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["body"],
+            message: `This template must include {{${required.token}}} — ${required.why}.`,
+          });
+        }
+      }),
   ),
 });
 
@@ -168,3 +220,4 @@ export type StylingSettingsInput = z.input<typeof stylingSettingsSchema>;
 export type EmailTemplatesInput = z.input<typeof emailTemplatesSchema>;
 export type SecuritySettingsInput = z.input<typeof securitySettingsSchema>;
 export type EmailSettingsInput = z.input<typeof emailSettingsSchema>;
+export type ZatcaSettingsInput = z.input<typeof zatcaSettingsSchema>;

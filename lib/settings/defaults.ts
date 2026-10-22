@@ -10,14 +10,22 @@ import type {
 // Shared (client-safe) option lists and defaults for Settings.
 
 export const DOCUMENT_TYPES: { type: DocumentType; label: string; prefix: string }[] = [
+  { type: "POS_SALE", label: "POS Sale", prefix: "POS" },
+  { type: "POS_RETURN", label: "POS Return", prefix: "RET" },
   { type: "QUOTATION", label: "Quotation", prefix: "QUO" },
   { type: "INVOICE", label: "Invoice", prefix: "INV" },
   { type: "PURCHASE", label: "Purchase", prefix: "PUR" },
   { type: "SUPPLIER_QUOTATION", label: "Supplier Quotation", prefix: "SQ" },
   { type: "EXPENSE", label: "Expense", prefix: "EXP" },
   { type: "INCOME", label: "Other Income", prefix: "INC" },
+  { type: "CREDIT_NOTE", label: "Credit Note", prefix: "CN" },
+  { type: "GOODS_RECEIPT", label: "Goods Receipt", prefix: "GRN" },
   { type: "PAYMENT", label: "Payment", prefix: "PAY" },
+  { type: "CUSTOMER_ADVANCE", label: "Customer Advance", prefix: "ADV" },
   { type: "PROJECT", label: "Project", prefix: "PROJ" },
+  { type: "WORK_ORDER", label: "Work Order", prefix: "JOB" },
+  { type: "STAY", label: "Room Stay", prefix: "STAY" },
+  { type: "RENTAL", label: "Rental", prefix: "RNT" },
 ];
 
 export const PAYMENT_ACCOUNT_TYPES: { value: PaymentAccountType; label: string }[] = [
@@ -104,6 +112,8 @@ export const EMAIL_PLACEHOLDERS = [
   { key: "remaining", description: "Remaining balance" },
   { key: "valid_until", description: "Quotation validity date" },
   { key: "login_url", description: "Link to the sign-in page" },
+  { key: "reset_url", description: "Password reset link (password reset email only)" },
+  { key: "reset_expiry", description: "How long the reset link lasts (password reset email only)" },
   { key: "signature", description: "Email signature from settings" },
 ] as const;
 
@@ -170,6 +180,23 @@ Please contact us if any details need to be confirmed before payment.
 An account has been created for you. Sign in here: {{login_url}}
 
 Your administrator will share your password with you separately.
+
+{{signature}}`,
+  },
+  {
+    key: "PASSWORD_RESET",
+    label: "Password reset",
+    description: "Sent when someone asks to reset their password from the sign-in screen.",
+    subject: "Reset your {{company_name}} password",
+    body: `Hello {{recipient_name}},
+
+We received a request to reset your password. Set a new one here:
+
+{{reset_url}}
+
+This link lasts {{reset_expiry}} and can only be used once.
+
+If you did not ask for this, you can ignore this email — your password has not changed.
 
 {{signature}}`,
   },

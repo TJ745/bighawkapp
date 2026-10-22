@@ -7,8 +7,10 @@ import { cn } from "@/lib/utils";
 // superAdminOnly sections are hidden from everyone else; their pages and actions check again.
 export const SETTINGS_SECTIONS: { label: string; href: string; superAdminOnly?: boolean }[] = [
   { label: "Company", href: "/settings/company" },
+  { label: "Branches", href: "/settings/branches" },
   { label: "Document Numbering", href: "/settings/numbering" },
   { label: "VAT", href: "/settings/vat" },
+  { label: "E-invoicing (ZATCA)", href: "/settings/zatca" },
   { label: "Payment Terms", href: "/settings/payment-terms" },
   { label: "Payment Accounts", href: "/settings/accounts" },
   { label: "Notifications", href: "/settings/notifications" },
@@ -16,6 +18,7 @@ export const SETTINGS_SECTIONS: { label: string; href: string; superAdminOnly?: 
   { label: "Document & Email Styling", href: "/settings/styling", superAdminOnly: true },
   { label: "Email (SMTP)", href: "/settings/email", superAdminOnly: true },
   { label: "Security", href: "/settings/security", superAdminOnly: true },
+  { label: "Modules", href: "/settings/modules", superAdminOnly: true },
 ];
 
 // Vertical section list on desktop, horizontally scrollable pills on small screens.

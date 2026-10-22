@@ -26,10 +26,11 @@ type PartyProfileProps = {
   quotations?: React.ReactNode;
   sales?: React.ReactNode;
   payments?: React.ReactNode;
+  advances?: React.ReactNode;
   projects?: React.ReactNode;
 };
 
-export function PartyProfile({ kind, party, canEdit, initialTab, quotations, sales, payments, projects }: PartyProfileProps) {
+export function PartyProfile({ kind, party, canEdit, initialTab, quotations, sales, payments, advances, projects }: PartyProfileProps) {
   const router = useRouter();
   const format = useFormat();
   const config = PARTY_CONFIG[kind];
@@ -40,7 +41,7 @@ export function PartyProfile({ kind, party, canEdit, initialTab, quotations, sal
     { value: "quotations", label: config.quotationsTab },
     { value: "sales", label: config.salesTab },
     { value: "payments", label: "Payments" },
-    ...(kind === "customer" ? [{ value: "projects", label: "Projects" }] : []),
+    ...(kind === "customer" ? [{ value: "advances", label: "Advances" }, { value: "projects", label: "Projects" }] : []),
     { value: "documents", label: "Documents" },
   ];
   const defaultTab = tabs.some((t) => t.value === initialTab) ? initialTab! : "overview";
@@ -131,6 +132,11 @@ export function PartyProfile({ kind, party, canEdit, initialTab, quotations, sal
         <TabsContent value="payments" className="pt-4">
           {payments ?? <EmptyState icon={Wallet} title="No payments yet" />}
         </TabsContent>
+        {kind === "customer" ? (
+          <TabsContent value="advances" className="pt-4">
+            {advances ?? <EmptyState icon={Wallet} title="No advances yet" />}
+          </TabsContent>
+        ) : null}
         {kind === "customer" ? (
           <TabsContent value="projects" className="pt-4">
             {projects ?? <EmptyState icon={FileText} title="No projects yet" />}

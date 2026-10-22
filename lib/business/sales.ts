@@ -83,12 +83,18 @@ export async function refreshInvoice(tx: Prisma.TransactionClient, id: string) {
     where: { id },
     select: { status: true, date: true, dueDate: true, grandTotal: true, depositAmount: true, sentAt: true },
   });
+  /**
+   * Payments include refund rows, which are negative, so this is the money actually held. Credit
+   * notes are counted separately: they settle an invoice without any money arriving.
+   */
   const sum = await tx.invoicePayment.aggregate({ where: { invoiceId: id }, _sum: { amount: true } });
   const paidTotal = round2(num(sum._sum.amount));
+  const credited = await tx.creditNote.aggregate({ where: { invoiceId: id, status: "ISSUED" }, _sum: { grandTotal: true } });
+  const creditedTotal = round2(num(credited._sum.grandTotal));
   const status = deriveInvoiceStatus(
-    { ...inv, grandTotal: num(inv.grandTotal), depositAmount: num(inv.depositAmount), paidTotal },
+    { ...inv, grandTotal: num(inv.grandTotal), depositAmount: num(inv.depositAmount), paidTotal, creditedTotal },
     await today(),
   );
-  await tx.invoice.update({ where: { id }, data: { paidTotal, status } });
-  return { paidTotal, status };
+  await tx.invoice.update({ where: { id }, data: { paidTotal, creditedTotal, status } });
+  return { paidTotal, creditedTotal, status };
 }

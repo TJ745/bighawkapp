@@ -22,6 +22,8 @@ enum PermissionModule {
   FINANCE
   USERS
   SETTINGS
+  POS
+  INVENTORY
 }
 
 model User {
@@ -37,6 +39,9 @@ model User {
   // Login security (Settings → Security): lockout after repeated failed sign-ins.
   failedLoginAttempts Int       @default(0)
   lockedUntil         DateTime?
+  // When a reset link was last sent, so asking again cannot be used to flood someone's inbox.
+  // Not a security boundary on its own — the token itself is random and short-lived.
+  passwordResetRequestedAt DateTime?
   roleId              String?
   role                Role?     @relation(fields: [roleId], references: [id], onDelete: SetNull)
   createdAt           DateTime  @default(now())
@@ -45,6 +50,8 @@ model User {
   sessions      Session[]
   accounts      Account[]
   notifications Notification[]
+  auditLogs     AuditLog[]
+  staffMember   StaffMember?
 
   @@index([roleId])
   @@index([isActive])
@@ -125,6 +132,14 @@ model RolePermission {
 // ---------------------------------------------------------------------------
 
 enum DocumentType {
+  CUSTOMER_ADVANCE
+  GOODS_RECEIPT
+  CREDIT_NOTE
+  RENTAL
+  WORK_ORDER
+  STAY
+  POS_SALE
+  POS_RETURN
   QUOTATION
   INVOICE
   PURCHASE
@@ -156,6 +171,7 @@ enum EmailTemplateKey {
   PAYMENT_REMINDER
   SUPPLIER_PAYMENT_REMINDER
   NEW_USER
+  PASSWORD_RESET
 }
 
 enum PdfHeaderStyle {
@@ -188,7 +204,45 @@ model CompanySettings {
   accountNumber     String?
   description       String?
   additionalContact String?
-  updatedAt         DateTime @updatedAt
+
+  // Saudi e-invoicing (ZATCA) seller identity. A tax invoice must carry the seller's legal name in
+  // Arabic and a national address broken into its components — `address` and `nationalAddress`
+  // above stay as the free-text lines documents have always printed.
+  companyNameAr    String?
+  addressAr        String?
+  buildingNumber   String?
+  streetName       String?
+  district         String?
+  city             String?
+  postalCode       String?
+  additionalNumber String?
+  region           String?
+  countryCode      String  @default("SA")
+
+  updatedAt DateTime @updatedAt
+}
+
+/**
+ * How far this deployment goes with Saudi e-invoicing.
+ *
+ * OFF leaves documents exactly as they were, which is what a company still filling in its details
+ * — or one outside Saudi Arabia — needs. PHASE_1 is ZATCA's "Generation" phase: the mandatory
+ * fields, Arabic, and the TLV QR code on every invoice and receipt, all produced locally with no
+ * call to ZATCA. Phase 2 ("Integration") adds the signed XML and submission, and will add its own
+ * value here when it is built — selecting a mode that does nothing would be a lie to the user.
+ */
+enum ZatcaMode {
+  OFF
+  PHASE_1
+}
+
+// Single row (id = "default"): Saudi e-invoicing (ZATCA / Fatoora).
+// Kept out of AppSettings because that row is sent to client components, while Phase 2 will store
+// cryptographic material here (CSR, certificates, the private key) that must never leave the server.
+model ZatcaSettings {
+  id        String    @id @default("default")
+  mode      ZatcaMode @default(OFF)
+  updatedAt DateTime  @updatedAt
 }
 
 // Single row (id = "default"): outgoing email (SMTP) — Super Admin only.
@@ -276,6 +330,10 @@ model PaymentAccount {
   purchasePayments PurchasePayment[]
   otherIncomes     OtherIncome[]
   expenses         Expense[]
+  posPayments      PosPayment[]
+  posRegisters     PosRegister[]
+  customerAdvances CustomerAdvance[]
+  advanceRefunds   CustomerAdvanceRefund[]
 
   @@index([isActive])
 }
@@ -339,6 +397,17 @@ model Customer {
   documents  CustomerDocument[]
   quotations Quotation[]
   invoices   Invoice[]
+  advances   CustomerAdvance[]
+  posSales   PosSale[]
+  appointments Appointment[]
+  memberships  Membership[]
+  creditNotes  CreditNote[]
+  workOrders   WorkOrder[]
+  stays        Stay[]
+  rentals      Rental[]
+  /// The prices this customer gets. Without one they pay the default list, or the catalogue.
+  priceListId  String?
+  priceList    PriceList?    @relation(fields: [priceListId], references: [id], onDelete: SetNull)
   purchases  Purchase[]
   projects   Project[]
 
@@ -426,6 +495,8 @@ enum InvoiceStatus {
   PARTIALLY_PAID
   PAID
   OVERDUE
+  /// Settled by credit notes rather than by money.
+  CREDITED
 }
 
 model Quotation {
@@ -515,6 +586,8 @@ model Invoice {
   vatTotal      Decimal @default(0) @db.Decimal(14, 2)
   grandTotal    Decimal @default(0) @db.Decimal(14, 2)
   paidTotal     Decimal @default(0) @db.Decimal(14, 2)
+  /// Reversed by credit notes. What the customer owes is grandTotal − paidTotal − creditedTotal.
+  creditedTotal Decimal @default(0) @db.Decimal(14, 2)
 
   terms         String?
   projectId     String?
@@ -526,6 +599,7 @@ model Invoice {
   items       InvoiceItem[]
   attachments InvoiceAttachment[]
   payments    InvoicePayment[]
+  creditNotes CreditNote[]
 
   createdById String?
   createdAt   DateTime @default(now())
@@ -552,6 +626,9 @@ model InvoiceItem {
   lineDiscount    Decimal @db.Decimal(14, 2)
   lineVat         Decimal @db.Decimal(14, 2)
   lineTotal       Decimal @db.Decimal(14, 2)
+  /// Already credited back; caps any later credit note against this line.
+  creditedQuantity Decimal @default(0) @db.Decimal(12, 2)
+  creditNoteItems  CreditNoteItem[]
 
   @@index([invoiceId])
 }
@@ -575,6 +652,14 @@ model InvoicePayment {
   number           String         @unique
   invoiceId        String
   invoice          Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  /// Set on a refund: a negative amount, given back because of this credit note.
+  creditNoteId     String?
+  creditNote       CreditNote?    @relation(fields: [creditNoteId], references: [id], onDelete: SetNull)
+  /// Set when the invoice was settled out of money the customer had already paid in advance.
+  /// Finance and account balances **exclude** these rows: the cash arrived with the advance, and
+  /// counting it again here would show the same money twice.
+  customerAdvanceId String?
+  customerAdvance   CustomerAdvance? @relation(fields: [customerAdvanceId], references: [id], onDelete: Restrict)
   amount           Decimal        @db.Decimal(14, 2)
   date             DateTime       @db.Date
   paymentAccountId String
@@ -585,6 +670,71 @@ model InvoicePayment {
   createdAt        DateTime       @default(now())
 
   @@index([invoiceId])
+  @@index([paymentAccountId])
+  @@index([customerAdvanceId])
+  @@index([date])
+}
+
+enum CustomerAdvanceStatus {
+  /// Money held, with some or all of it still unallocated.
+  OPEN
+  /// Every riyal has been put against an invoice or given back.
+  SETTLED
+  /// Keyed in error and withdrawn. The record stays; the money comes back out of Finance.
+  CANCELLED
+}
+
+/// Money a customer paid before there was an invoice to put it against — a deposit on an order, a
+/// retainer, payment up front. The cash arrives **here**, which is why this row is what Finance
+/// counts: applying it to an invoice later moves nothing, it only decides what the money settles.
+model CustomerAdvance {
+  id               String                @id @default(cuid())
+  number           String                @unique
+  customerId       String
+  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  date             DateTime              @db.Date
+  amount           Decimal               @db.Decimal(14, 2)
+  /// Kept in step with the payment rows this advance has funded, so the balance is one read.
+  appliedTotal     Decimal               @default(0) @db.Decimal(14, 2)
+  /// Unused money handed back. It leaves on its own date, so it is its own row, not a negative here.
+  refundedTotal    Decimal               @default(0) @db.Decimal(14, 2)
+  status           CustomerAdvanceStatus @default(OPEN)
+  paymentAccountId String
+  paymentAccount   PaymentAccount        @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  reference        String?
+  notes            String?
+  cancelledAt      DateTime?
+  cancelReason     String?
+  /// The invoice payments this advance paid for.
+  payments         InvoicePayment[]
+  refunds          CustomerAdvanceRefund[]
+  createdById      String?
+  createdByName    String
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([customerId])
+  @@index([paymentAccountId])
+  @@index([date])
+  @@index([status])
+}
+
+/// Unused advance money given back. Separate from the advance because Finance is cash-based: the
+/// money left on *this* date, which may be a different period from the one it arrived in.
+model CustomerAdvanceRefund {
+  id               String          @id @default(cuid())
+  advanceId        String
+  advance          CustomerAdvance @relation(fields: [advanceId], references: [id], onDelete: Cascade)
+  amount           Decimal         @db.Decimal(14, 2)
+  date             DateTime        @db.Date
+  paymentAccountId String
+  paymentAccount   PaymentAccount  @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  reference        String?
+  createdById      String?
+  createdByName    String
+  createdAt        DateTime        @default(now())
+
+  @@index([advanceId])
   @@index([paymentAccountId])
   @@index([date])
 }
@@ -705,6 +855,7 @@ model Purchase {
   items       PurchaseItem[]
   attachments PurchaseAttachment[]
   payments    PurchasePayment[]
+  receipts    PurchaseReceipt[]
 
   createdById String?
   createdAt   DateTime @default(now())
@@ -732,8 +883,16 @@ model PurchaseItem {
   lineDiscount    Decimal  @db.Decimal(14, 2)
   lineVat         Decimal  @db.Decimal(14, 2)
   lineTotal       Decimal  @db.Decimal(14, 2)
+  /// The catalogue item this line buys, when it buys one. Set when the line is first received,
+  /// and remembered afterwards. Free-text lines (rent, courier, fees) never have one.
+  variantId       String?
+  variant         ItemVariant? @relation("PurchasedItem", fields: [variantId], references: [id], onDelete: SetNull)
+  /// How much of the line has physically arrived; caps any later receipt.
+  receivedQuantity Decimal @default(0) @db.Decimal(12, 2)
+  receiptItems    PurchaseReceiptItem[]
 
   @@index([purchaseId])
+  @@index([variantId])
 }
 
 model PurchaseAttachment {
@@ -923,4 +1082,1419 @@ model NotificationEvent {
   id        String   @id @default(cuid())
   key       String   @unique
   createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Platform: modules, branches, POS configuration, audit
+//
+// These rows describe *this* company's BigHawk subscription: which modules are
+// switched on, its branches, and the POS industry each branch runs. BigHawk is
+// one company per deployment today, so there is no companyId column yet; when
+// the platform becomes multi-tenant every model in this section gains one, and
+// the reads in lib/data/platform.ts are the only place that has to change.
+// ---------------------------------------------------------------------------
+
+/// Top-level product modules a company can subscribe to.
+enum AppModule {
+  BUSINESS_MANAGEMENT
+  POS
+}
+
+/// The industry a POS branch runs. Capabilities per type live in lib/platform/pos-types.ts.
+enum PosBusinessType {
+  RETAIL
+  GROCERY
+  APPAREL
+  RESTAURANT
+  QSR
+  CAFE
+  BAKERY
+  BAR
+  FOOD_TRUCK
+  SALON
+  SPA
+  GYM
+  REPAIR
+  WHOLESALE
+  HOTEL
+  CINEMA
+  ENTERTAINMENT
+  OTHER
+}
+
+/// One row per module: the commercial on/off switch, managed by the BigHawk Super Admin.
+model ModuleSetting {
+  id        String    @id @default(cuid())
+  module    AppModule @unique
+  enabled   Boolean   @default(false)
+  enabledAt DateTime?
+  updatedAt DateTime  @updatedAt
+}
+
+/// A physical location. Every POS register, shift and sale will hang off a branch.
+model Branch {
+  id        String            @id @default(cuid())
+  code      String            @unique
+  name      String
+  phone     String?
+  city      String?
+  address   String?
+  vatNumber String?
+  isActive  Boolean           @default(true)
+  // The branch used when nobody has chosen one; exactly one branch carries this.
+  isDefault Boolean           @default(false)
+  posConfig PosConfiguration?
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
+  posRegisters   PosRegister[]
+  posShifts      PosShift[]
+  posSales       PosSale[]
+  posReturns     PosReturn[]
+  posTables      PosTable[]
+  posKitchen     PosKitchenTicket[]
+  posCounters    PosOrderCounter[]
+  staff          StaffMember[]
+  appointments   Appointment[]
+  memberships    Membership[]
+  workOrders     WorkOrder[]
+  ticketEvents   TicketEvent[]
+  rooms          Room[]
+  stays          Stay[]
+  rentals        Rental[]
+  purchaseReceipts PurchaseReceipt[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@index([isActive])
+}
+
+/// POS settings for one branch, so a company can run different industries per location.
+model PosConfiguration {
+  id            String          @id @default(cuid())
+  branchId      String          @unique
+  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  businessType  PosBusinessType @default(RETAIL)
+  // A branch can be excluded from POS while the company-wide module stays on.
+  isActive      Boolean         @default(true)
+  receiptHeader String          @default("")
+  receiptFooter String          @default("")
+
+  // --- Scale labels (branches whose industry has the WEIGHT capability) ---
+  /// Scanning a scale-printed label adds the item with the weight or price it encodes.
+  scaleBarcodeEnabled Boolean          @default(false)
+  /// Leading digits that mark a label as coming from a scale, e.g. "2" or "21".
+  scaleBarcodePrefix  String           @default("2")
+  /// How many digits after the prefix identify the item (its PLU). The default makes a 13-digit
+  /// label: 1 prefix + 6 PLU + 5 value + 1 check digit.
+  scaleCodeDigits     Int              @default(6)
+  /// Whether the trailing digits are a weight or a money amount.
+  scaleBarcodeMode    ScaleBarcodeMode @default(WEIGHT)
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+/// What the digits after the item code on a scale label mean.
+enum ScaleBarcodeMode {
+  /// Five digits of weight, three decimal places: 01250 = 1.250 kg.
+  WEIGHT
+  /// Five digits of money, two decimal places: 01250 = 12.50 — quantity is derived from the price.
+  PRICE
+}
+
+/// Trail of consequential changes. Written through recordAudit() in lib/platform/audit.ts.
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String
+  entity     String
+  entityId   String?
+  summary    String
+  metadata   Json?
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userName   String
+  branchId   String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entity, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue & inventory (POS module)
+//
+// Items cover both things you stock and services you perform. Stock always hangs off a variant,
+// so a plain product carries a single default variant and the rest of the system never has to
+// special-case "product without variants". Quantities are Decimal(14,3) so weighed goods work.
+// ---------------------------------------------------------------------------
+
+enum ItemKind {
+  PRODUCT
+  SERVICE
+}
+
+/// Why stock moved. Every change to a stock level writes one of these.
+enum StockMovementKind {
+  OPENING
+  PURCHASE_RECEIPT
+  SALE
+  SALE_RETURN
+  PURCHASE_RETURN
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+  /// Lent out on a rental: gone from the shelf, but not sold.
+  RENTAL_OUT
+  /// Back from a rental.
+  RENTAL_IN
+}
+
+model ItemCategory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  items       Item[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+model Item {
+  id          String        @id @default(cuid())
+  kind        ItemKind      @default(PRODUCT)
+  name        String
+  /// Internal reference for the item as a whole; variants carry their own SKU and barcode.
+  code        String?       @unique
+  categoryId  String?
+  category    ItemCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brand       String?
+  description String?
+  imageKey    String?
+  imageUrl    String?
+  /// pcs, kg, L, hour… free text so any trade can describe its own unit.
+  unit        String        @default("pcs")
+  salePrice   Decimal       @default(0) @db.Decimal(14, 2)
+  costPrice   Decimal       @default(0) @db.Decimal(14, 2)
+  /// null = use the company VAT rate from Settings.
+  vatRate     Decimal?      @db.Decimal(5, 2)
+  /// Services and non-stocked products (e.g. made to order) keep no stock levels.
+  trackStock  Boolean       @default(true)
+  /// Service length, for industries that book time (salon, spa, repair labour).
+  durationMinutes Int?
+  isActive    Boolean       @default(true)
+  variants    ItemVariant[]
+  modifierGroups ItemModifierGroup[]
+  createdById String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([kind, isActive])
+  @@index([categoryId])
+  @@index([name])
+}
+
+model ItemVariant {
+  id           String          @id @default(cuid())
+  itemId       String
+  item         Item            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  /// "Black / M", or the item name for a product sold in one form.
+  name         String
+  sku          String?         @unique
+  barcode      String?         @unique
+  /// Short numeric code used by scales and keypads for loose goods (a PLU).
+  plu          String?         @unique
+  /// The attribute pairs that define this variant, e.g. {"Colour":"Black","Size":"M"}.
+  attributes   Json?
+  /// null = inherit the item's price/cost.
+  salePrice    Decimal?        @db.Decimal(14, 2)
+  costPrice    Decimal?        @db.Decimal(14, 2)
+  minStock     Decimal         @default(0) @db.Decimal(14, 3)
+  reorderLevel Decimal         @default(0) @db.Decimal(14, 3)
+  isDefault    Boolean         @default(false)
+  isActive     Boolean         @default(true)
+  sortOrder    Int             @default(0)
+  stockLevels  StockLevel[]
+  movements    StockMovement[]
+  posSaleItems PosSaleItem[]
+  posReturnItems PosReturnItem[]
+  kitchenItems PosKitchenTicketItem[]
+  recipe       RecipeComponent[]       @relation("RecipeOf")
+  usedIn       RecipeComponent[]       @relation("RecipeIngredient")
+  consumed     PosSaleItemIngredient[] @relation("ConsumedBySale")
+  appointmentItems AppointmentItem[]
+  pricedOnLists    PriceListItem[]         @relation("PricedOnList")
+  ticketEvents     TicketEvent[]           @relation("TicketItem")
+  roomNights       Room[]                  @relation("RoomNightItem")
+  rentals          Rental[]                @relation("RentedItem")
+  purchasedOn      PurchaseItem[]          @relation("PurchasedItem")
+  receivedOn       PurchaseReceiptItem[]   @relation("ReceivedItem")
+  membershipPlans  MembershipPlan[]        @relation("MembershipPlanItem")
+  coveredByPlans   MembershipPlanService[] @relation("MembershipCovers")
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([itemId, isActive])
+  @@index([barcode])
+}
+
+/// Current quantity of one variant at one branch. Only ever written by lib/business/inventory.ts.
+model StockLevel {
+  id        String      @id @default(cuid())
+  variantId String
+  variant   ItemVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  branchId  String
+  branch    Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  quantity  Decimal     @default(0) @db.Decimal(14, 3)
+  updatedAt DateTime    @updatedAt
+
+  @@unique([variantId, branchId])
+  @@index([branchId])
+}
+
+/// Append-only history of stock changes: the audit trail behind every stock level.
+model StockMovement {
+  id            String            @id @default(cuid())
+  variantId     String
+  variant       ItemVariant       @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  branchId      String
+  branch        Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  kind          StockMovementKind
+  /// Signed delta actually applied: positive in, negative out.
+  quantity      Decimal           @db.Decimal(14, 3)
+  balanceAfter  Decimal           @db.Decimal(14, 3)
+  unitCost      Decimal?          @db.Decimal(14, 2)
+  /// What caused it: document type/id/number, so stock can be traced back to the transaction.
+  referenceType String?
+  referenceId   String?
+  reference     String?
+  note          String?
+  userId        String?
+  userName      String
+  createdAt     DateTime          @default(now())
+
+  @@index([variantId, createdAt])
+  @@index([branchId, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+// ---------------------------------------------------------------------------
+// POS: registers, shifts, sales
+//
+// A sale is the POS equivalent of an invoice that is paid on the spot. It reuses the company's
+// payment accounts (so money lands where Finance looks for it), the document numbering sequence
+// and the stock engine. Nothing about money or stock is re-implemented here.
+// ---------------------------------------------------------------------------
+
+enum PosShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum PosSaleStatus {
+  /// Held at the till: nothing taken and no stock moved yet.
+  PARKED
+  COMPLETED
+  VOIDED
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+/// How the customer paid. The money still lands in a PaymentAccount; this is for drawer
+/// reconciliation (only CASH counts) and for reporting.
+enum PosPaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  OTHER
+}
+
+enum PosCashMovementKind {
+  CASH_IN
+  CASH_OUT
+}
+
+/// A till. Several registers can sit in one branch; each has its own shifts and sales.
+model PosRegister {
+  id            String          @id @default(cuid())
+  branchId      String
+  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name          String
+  /// Where cash taken at this till is recorded; defaults to the company Cash account.
+  cashAccountId String?
+  cashAccount   PaymentAccount? @relation(fields: [cashAccountId], references: [id], onDelete: SetNull)
+  isActive      Boolean         @default(true)
+  shifts        PosShift[]
+  sales         PosSale[]
+  returns       PosReturn[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@unique([branchId, name])
+  @@index([branchId, isActive])
+}
+
+/// One cashier's session at a register: opening float, what happened, closing count.
+model PosShift {
+  id           String            @id @default(cuid())
+  registerId   String
+  register     PosRegister       @relation(fields: [registerId], references: [id], onDelete: Cascade)
+  branchId     String
+  branch       Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  status       PosShiftStatus    @default(OPEN)
+  openingCash  Decimal           @default(0) @db.Decimal(14, 2)
+  openedById   String?
+  openedByName String
+  openedAt     DateTime          @default(now())
+  /// Counted at close, with what the system expected and the difference between them.
+  closingCash  Decimal?          @db.Decimal(14, 2)
+  expectedCash Decimal?          @db.Decimal(14, 2)
+  variance     Decimal?          @db.Decimal(14, 2)
+  closedById   String?
+  closedByName String?
+  closedAt     DateTime?
+  note         String?
+  sales        PosSale[]
+  returns      PosReturn[]
+  movements    PosCashMovement[]
+
+  @@index([branchId, openedAt])
+  @@index([registerId, status])
+}
+
+/// Cash put into or taken out of the drawer during a shift (float, bank run, petty cash).
+model PosCashMovement {
+  id        String              @id @default(cuid())
+  shiftId   String
+  shift     PosShift            @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  kind      PosCashMovementKind
+  amount    Decimal             @db.Decimal(14, 2)
+  reason    String
+  userId    String?
+  userName  String
+  createdAt DateTime            @default(now())
+
+  @@index([shiftId])
+}
+
+model PosSale {
+  id                  String        @id @default(cuid())
+  number              String        @unique
+  branchId            String
+  branch              Branch        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  registerId          String?
+  register            PosRegister?  @relation(fields: [registerId], references: [id], onDelete: SetNull)
+  shiftId             String?
+  shift               PosShift?     @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  /// Walk-in sales have no customer; naming one links the sale to their history.
+  customerId          String?
+  customer            Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  /// Bar tabs: the name the bill is running under when there is no table and no customer record.
+  tabName             String?
+  /// Counter collection number for the day, allocated only where orders are called out.
+  orderNumber         Int?
+  /// Dine-in only: the table this order is running on. A PARKED sale with a table is an open order.
+  tableId             String?
+  table               PosTable?     @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  /// How many people are seated, for covers reporting and for the floor plan.
+  guestCount          Int?
+  status              PosSaleStatus @default(COMPLETED)
+  soldAt              DateTime      @default(now())
+  /// Cash-basis date used by Finance, matching how invoice payments are dated.
+  date                DateTime      @db.Date
+  subtotal            Decimal       @default(0) @db.Decimal(14, 2)
+  discountTotal       Decimal       @default(0) @db.Decimal(14, 2)
+  vatTotal            Decimal       @default(0) @db.Decimal(14, 2)
+  grandTotal          Decimal       @default(0) @db.Decimal(14, 2)
+  /// Cost of what was sold, snapshotted per line, so margin does not depend on today's costs.
+  costTotal           Decimal       @default(0) @db.Decimal(14, 2)
+  paidTotal           Decimal       @default(0) @db.Decimal(14, 2)
+  changeDue           Decimal       @default(0) @db.Decimal(14, 2)
+  /// A discount on the whole cart, on top of any per-line discounts.
+  cartDiscountPercent Decimal       @default(0) @db.Decimal(5, 2)
+  refundedTotal       Decimal       @default(0) @db.Decimal(14, 2)
+  note                String?
+  cashierId           String?
+  cashierName         String
+  voidedAt            DateTime?
+  voidedByName        String?
+  voidReason          String?
+  items               PosSaleItem[]
+  payments            PosPayment[]
+  kitchenTickets      PosKitchenTicket[]
+  appointment         Appointment?
+  memberships         Membership[]
+  workOrder           WorkOrder?
+  stayFolio           Stay?              @relation("StayFolio")
+  rentalsTakenOut     Rental[]           @relation("RentalSale")
+  rentalsSettled      Rental[]           @relation("RentalSettlement")
+  returns             PosReturn[]
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@index([branchId, soldAt])
+  @@index([date])
+  @@index([shiftId])
+  @@index([status])
+  @@index([customerId])
+  @@index([tableId, status])
+  @@index([branchId, date, orderNumber])
+}
+
+/// A table on a branch's floor plan. Only industries with the TABLES capability use these;
+/// the open order on a table is a PARKED PosSale pointing at it, never a second kind of document.
+model PosTable {
+  id        String    @id @default(cuid())
+  branchId  String
+  branch    Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  /// Section of the floor plan: "Ground floor", "Terrace", "Family". Blank groups as "Floor".
+  area      String?
+  seats     Int       @default(2)
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  sales     PosSale[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([branchId, name])
+  @@index([branchId, isActive])
+}
+
+model PosSaleItem {
+  id              String       @id @default(cuid())
+  saleId          String
+  sale            PosSale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  variantId       String?
+  variant         ItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  /// Snapshots: a receipt must still read correctly after the catalogue changes.
+  name            String
+  sku             String?
+  unit            String       @default("pcs")
+  quantity        Decimal      @db.Decimal(14, 3)
+  unitPrice       Decimal      @db.Decimal(14, 2)
+  unitCost        Decimal      @default(0) @db.Decimal(14, 2)
+  discountPercent Decimal      @default(0) @db.Decimal(5, 2)
+  vatRate         Decimal      @default(0) @db.Decimal(5, 2)
+  lineSubtotal    Decimal      @default(0) @db.Decimal(14, 2)
+  lineDiscount    Decimal      @default(0) @db.Decimal(14, 2)
+  lineVat         Decimal      @default(0) @db.Decimal(14, 2)
+  lineTotal       Decimal      @default(0) @db.Decimal(14, 2)
+  /// Whether this line moved stock (services and untracked products do not).
+  movedStock      Boolean      @default(false)
+  /// How much of this line has been returned, so a partial return cannot exceed what was sold.
+  returnedQuantity Decimal     @default(0) @db.Decimal(14, 3)
+  returnItems     PosReturnItem[]
+  modifiers       PosSaleItemModifier[]
+  ingredients     PosSaleItemIngredient[]
+  staff           PosSaleItemStaff[]
+  membershipUse   MembershipUse?
+  ticketIssued    TicketIssued?
+  sortOrder       Int          @default(0)
+
+  @@index([saleId])
+  @@index([variantId])
+}
+
+model PosPayment {
+  id               String           @id @default(cuid())
+  saleId           String
+  sale             PosSale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  /// Set when this row is a refund: the amount is negative and belongs to that return.
+  returnId         String?
+  posReturn        PosReturn?       @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  method           PosPaymentMethod
+  paymentAccountId String
+  paymentAccount   PaymentAccount   @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  amount           Decimal          @db.Decimal(14, 2)
+  /// Card approval code, transfer reference…
+  reference        String?
+  /// Cash-basis date, kept on the payment so Finance can range-filter it directly.
+  date             DateTime         @db.Date
+  createdAt        DateTime         @default(now())
+
+  @@index([saleId])
+  @@index([returnId])
+  @@index([date])
+  @@index([paymentAccountId])
+}
+
+// ---------------------------------------------------------------------------
+// POS returns & refunds
+//
+// A return is its own document against the original sale: it records what came back, whether it
+// went to stock, and what was handed back to the customer. The refund itself is a *negative*
+// PosPayment row tagged with the return, so money out follows the same path money in does —
+// Finance, account balances and the shift drawer all net out without a second code path.
+// ---------------------------------------------------------------------------
+
+model PosReturn {
+  id            String          @id @default(cuid())
+  number        String          @unique
+  saleId        String
+  sale          PosSale         @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  branchId      String
+  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  registerId    String?
+  register      PosRegister?    @relation(fields: [registerId], references: [id], onDelete: SetNull)
+  shiftId       String?
+  shift         PosShift?       @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  returnedAt    DateTime        @default(now())
+  /// Cash-basis date, like the sale's, so Finance can range-filter the refund.
+  date          DateTime        @db.Date
+  /// Positive amounts: what is being given back.
+  subtotal      Decimal         @default(0) @db.Decimal(14, 2)
+  discountTotal Decimal         @default(0) @db.Decimal(14, 2)
+  vatTotal      Decimal         @default(0) @db.Decimal(14, 2)
+  grandTotal    Decimal         @default(0) @db.Decimal(14, 2)
+  /// Cost of the returned goods, so margin reverses with them.
+  costTotal     Decimal         @default(0) @db.Decimal(14, 2)
+  reason        String
+  /// Saleable goods go back on the shelf; damaged ones do not.
+  restock       Boolean         @default(true)
+  userId        String?
+  userName      String
+  items         PosReturnItem[]
+  payments      PosPayment[]
+  createdAt     DateTime        @default(now())
+
+  @@index([saleId])
+  @@index([branchId, returnedAt])
+  @@index([date])
+  @@index([shiftId])
+}
+
+model PosReturnItem {
+  id              String       @id @default(cuid())
+  returnId        String
+  return          PosReturn    @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  /// The sale line this came from; its returnedQuantity is what stops over-returning.
+  saleItemId      String
+  saleItem        PosSaleItem  @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+  variantId       String?
+  variant         ItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  name            String
+  sku             String?
+  unit            String       @default("pcs")
+  quantity        Decimal      @db.Decimal(14, 3)
+  unitPrice       Decimal      @db.Decimal(14, 2)
+  unitCost        Decimal      @default(0) @db.Decimal(14, 2)
+  discountPercent Decimal      @default(0) @db.Decimal(5, 2)
+  vatRate         Decimal      @default(0) @db.Decimal(5, 2)
+  lineSubtotal    Decimal      @default(0) @db.Decimal(14, 2)
+  lineDiscount    Decimal      @default(0) @db.Decimal(14, 2)
+  lineVat         Decimal      @default(0) @db.Decimal(14, 2)
+  lineTotal       Decimal      @default(0) @db.Decimal(14, 2)
+  /// Whether this line actually put stock back.
+  restocked       Boolean      @default(false)
+  sortOrder       Int          @default(0)
+
+  @@index([returnId])
+  @@index([saleItemId])
+}
+
+// ---------------------------------------------------------------------------
+// Modifiers (the MODIFIERS capability: cafe, bakery, restaurant, QSR)
+//
+// A modifier group is a question asked when an item is ordered — "Milk?", "Size?", "Extras?" —
+// and its options may change the price. Groups are defined once and attached to any number of
+// items, because every cafe asks the same milk question of every drink.
+//
+// What was chosen is snapshotted onto the sale line, so a receipt still reads correctly after the
+// menu changes, exactly as the line's name and price already are.
+// ---------------------------------------------------------------------------
+
+model ModifierGroup {
+  id        String              @id @default(cuid())
+  name      String              @unique
+  /// Shown above the options at the till ("Choose a milk").
+  prompt    String?
+  /// How many options must be chosen: 0 makes the group optional.
+  minSelect Int                 @default(0)
+  /// How many may be chosen; 1 is a single choice, higher allows extras.
+  maxSelect Int                 @default(1)
+  sortOrder Int                 @default(0)
+  isActive  Boolean             @default(true)
+  options   ModifierOption[]
+  items     ItemModifierGroup[]
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+model ModifierOption {
+  id         String        @id @default(cuid())
+  groupId    String
+  group      ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name       String
+  /// Added to the line's unit price; may be negative for a reduction.
+  priceDelta Decimal       @default(0) @db.Decimal(14, 2)
+  /// Pre-selected when the item is tapped.
+  isDefault  Boolean       @default(false)
+  sortOrder  Int           @default(0)
+  isActive   Boolean       @default(true)
+
+  @@index([groupId, isActive])
+}
+
+/// Which groups an item asks about, and in what order.
+model ItemModifierGroup {
+  id        String        @id @default(cuid())
+  itemId    String
+  item      Item          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  groupId   String
+  group     ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  sortOrder Int           @default(0)
+
+  @@unique([itemId, groupId])
+  @@index([itemId])
+}
+
+/// What was actually chosen on a sold line — a snapshot, like the line's name and price.
+model PosSaleItemModifier {
+  id         String      @id @default(cuid())
+  saleItemId String
+  saleItem   PosSaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  optionId   String?
+  groupName  String
+  optionName String
+  priceDelta Decimal     @default(0) @db.Decimal(14, 2)
+  sortOrder  Int         @default(0)
+
+  @@index([saleItemId])
+}
+
+// --- Kitchen (the KITCHEN capability: restaurant, quick service) ---------------
+
+/// Where a ticket is in the kitchen. Forward only, apart from cancelling.
+enum PosKitchenStatus {
+  /// Sent, not started.
+  NEW
+  PREPARING
+  READY
+  /// Handed to the table or the counter.
+  SERVED
+  CANCELLED
+}
+
+/// One round sent to the kitchen from an order. A ticket is a snapshot of what was sent: the bill
+/// it came from is rewritten whenever a round is added, so the kitchen's copy must stand alone.
+model PosKitchenTicket {
+  id         String                 @id @default(cuid())
+  saleId     String
+  sale       PosSale                @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  branchId   String
+  branch     Branch                 @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  /// Round within the order: 1 for the first send, 2 for the next.
+  round      Int                    @default(1)
+  status     PosKitchenStatus       @default(NEW)
+  note       String?
+  sentAt     DateTime               @default(now())
+  startedAt  DateTime?
+  readyAt    DateTime?
+  servedAt   DateTime?
+  sentById   String?
+  sentByName String
+  items      PosKitchenTicketItem[]
+  createdAt  DateTime               @default(now())
+  updatedAt  DateTime               @updatedAt
+
+  @@index([branchId, status, sentAt])
+  @@index([saleId])
+}
+
+model PosKitchenTicketItem {
+  id        String           @id @default(cuid())
+  ticketId  String
+  ticket    PosKitchenTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  /// Kept for matching against the bill; the cook works from the snapshot below.
+  variantId String?
+  variant   ItemVariant?     @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  name      String
+  unit      String
+  quantity  Decimal          @db.Decimal(14, 3)
+  /// The chosen options as words — "Oat, Extra shot" — because that is what the cook needs.
+  options   String?
+  /// The chosen options as ids, in a stable order, so the same item with different options is
+  /// counted separately when working out what has not been sent yet.
+  signature String           @default("")
+  sortOrder Int              @default(0)
+
+  @@index([ticketId])
+}
+
+// --- Recipes (the RECIPES capability: restaurant, cafe, bakery) ----------------
+
+/// One ingredient of a dish or drink: selling the dish takes this much out of stock.
+///
+/// Recipes are one level deep on purpose — an ingredient may not itself have a recipe — so what a
+/// sale consumes is always obvious from the rows a person can see.
+model RecipeComponent {
+  id                  String      @id @default(cuid())
+  /// The variant that is sold (the latte, the burger).
+  variantId           String
+  variant             ItemVariant @relation("RecipeOf", fields: [variantId], references: [id], onDelete: Cascade)
+  /// The variant that is consumed (the milk, the patty).
+  ingredientVariantId String
+  ingredient          ItemVariant @relation("RecipeIngredient", fields: [ingredientVariantId], references: [id], onDelete: Restrict)
+  /// How much of the ingredient one unit of the dish uses, in the ingredient's own unit.
+  quantity            Decimal     @db.Decimal(14, 3)
+  sortOrder           Int         @default(0)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  @@unique([variantId, ingredientVariantId])
+  @@index([variantId])
+  @@index([ingredientVariantId])
+}
+
+/// What a sold line actually consumed, snapshotted like its price and cost — so a void or a
+/// return puts back exactly what was taken, even if the recipe has been changed since.
+model PosSaleItemIngredient {
+  id         String       @id @default(cuid())
+  saleItemId String
+  saleItem   PosSaleItem  @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  variantId  String?
+  variant    ItemVariant? @relation("ConsumedBySale", fields: [variantId], references: [id], onDelete: SetNull)
+  name       String
+  unit       String
+  /// Total consumed for the whole line, not per unit sold.
+  quantity   Decimal      @db.Decimal(14, 3)
+  /// Unit cost at the time, so the line's cost of goods can be explained.
+  unitCost   Decimal      @default(0) @db.Decimal(14, 2)
+  sortOrder  Int          @default(0)
+
+  @@index([saleItemId])
+}
+
+/// The day's collection numbers for one branch ("Order 42"), kept as a locked row per day so two
+/// tills never call out the same number — the same approach as document numbering.
+model PosOrderCounter {
+  id        String   @id @default(cuid())
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  /// The trading day the numbers belong to; they start again each morning.
+  date      DateTime @db.Date
+  next      Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, date])
+}
+
+// --- Staff, commission and appointments (salon, spa, gym) ---------------------
+
+/// Someone who performs services: a stylist, a therapist, a trainer.
+///
+/// Separate from `User` on purpose — most of them never sign in, and the ones who do are linked.
+/// Commission and bookings both hang off this record, so a person keeps their history even after
+/// their login is removed.
+model StaffMember {
+  id                String             @id @default(cuid())
+  branchId          String
+  branch            Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name              String
+  phone             String?
+  /// The app user this person signs in as, when they do.
+  userId            String?            @unique
+  user              User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Default share of a service they perform, as a percentage of what the customer pays for it.
+  commissionPercent Decimal            @default(0) @db.Decimal(5, 2)
+  /// Shown on the booking calendar, so a day's columns are easy to tell apart.
+  colour            String?
+  isActive          Boolean            @default(true)
+  appointments      Appointment[]
+  appointmentItems  AppointmentItem[]
+  commissions       PosSaleItemStaff[]
+  workOrders        WorkOrder[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@unique([branchId, name])
+  @@index([branchId, isActive])
+}
+
+/// What one person earned on one sold line. A snapshot: the rate and the amount are kept, so a
+/// later change to their commission never rewrites what they have already been paid.
+model PosSaleItemStaff {
+  id                String       @id @default(cuid())
+  saleItemId        String
+  saleItem          PosSaleItem  @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  staffId           String?
+  staff             StaffMember? @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  staffName         String
+  commissionPercent Decimal      @default(0) @db.Decimal(5, 2)
+  /// What the line earned them, on what the customer actually paid for it (VAT excluded).
+  amount            Decimal      @default(0) @db.Decimal(14, 2)
+  /// Reversed by a void or a return, so a refunded service is not still owed.
+  reversedAmount    Decimal      @default(0) @db.Decimal(14, 2)
+
+  @@index([saleItemId])
+  @@index([staffId])
+}
+
+/// Where a booking is in its day.
+enum AppointmentStatus {
+  BOOKED
+  CONFIRMED
+  /// The customer is here.
+  ARRIVED
+  /// Done and paid: the sale it became is on the booking.
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+}
+
+/// A booked service, with the person who will do it and the time it takes.
+model Appointment {
+  id            String            @id @default(cuid())
+  branchId      String
+  branch        Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  /// A regular's record, when there is one; otherwise just a name and a phone number.
+  customerId    String?
+  customer      Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName  String
+  customerPhone String?
+  staffId       String
+  staff         StaffMember       @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  startAt       DateTime
+  /// Worked out from the services booked, so the calendar shows the real length.
+  endAt         DateTime
+  status        AppointmentStatus @default(BOOKED)
+  note          String?
+  /// The sale this booking became. One booking, one sale.
+  saleId        String?           @unique
+  sale          PosSale?          @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  items         AppointmentItem[]
+  createdById   String?
+  createdByName String
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([branchId, startAt])
+  @@index([staffId, startAt])
+  @@index([status])
+  @@index([customerId])
+}
+
+/// One service on a booking, priced and timed when it was booked.
+model AppointmentItem {
+  id              String       @id @default(cuid())
+  appointmentId   String
+  appointment     Appointment  @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  variantId       String?
+  variant         ItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  name            String
+  /// How long this service takes; the booking's end time is the sum of them.
+  durationMinutes Int          @default(30)
+  price           Decimal      @default(0) @db.Decimal(14, 2)
+  /// Normally the booking's staff member, but a second pair of hands can take one service.
+  staffId         String?
+  staff           StaffMember? @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  sortOrder       Int          @default(0)
+
+  @@index([appointmentId])
+}
+
+// --- Memberships (salon, spa, gym) -------------------------------------------
+
+/// A plan a customer can buy: a period, optionally a bundle of sessions, optionally a discount.
+///
+/// Selling one is an ordinary POS sale of the `ItemVariant` named here, so the money, the VAT and
+/// the receipt all go through the one path this app has for taking money. The plan only decides
+/// what the customer gets for it.
+model MembershipPlan {
+  id              String                  @id @default(cuid())
+  name            String                  @unique
+  description     String?
+  /// What is actually rung up at the till when the plan is sold.
+  variantId       String
+  variant         ItemVariant             @relation("MembershipPlanItem", fields: [variantId], references: [id], onDelete: Restrict)
+  /// How long it runs for, from the day it is sold.
+  durationDays    Int                     @default(30)
+  /// Included sessions; 0 means unlimited use of the covered services for the period.
+  sessionCount    Int                     @default(0)
+  /// Discount on covered services once the sessions are gone, or when there are none.
+  discountPercent Decimal                 @default(0) @db.Decimal(5, 2)
+  /// What the plan covers. Empty covers every service.
+  services        MembershipPlanService[]
+  isActive        Boolean                 @default(true)
+  memberships     Membership[]
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  @@index([isActive])
+}
+
+model MembershipPlanService {
+  id        String         @id @default(cuid())
+  planId    String
+  plan      MembershipPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  variantId String
+  variant   ItemVariant    @relation("MembershipCovers", fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, variantId])
+}
+
+enum MembershipStatus {
+  ACTIVE
+  /// Past its end date; kept so the history of what was used stays readable.
+  EXPIRED
+  CANCELLED
+}
+
+/// One customer's membership, as sold. Everything it promises is snapshotted, so changing a plan
+/// never changes what a member already bought.
+model Membership {
+  id               String           @id @default(cuid())
+  branchId         String
+  branch           Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  /// A membership belongs to a customer record — there is nobody to credit otherwise.
+  customerId       String
+  customer         Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  planId           String?
+  plan             MembershipPlan?  @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planName         String
+  startDate        DateTime         @db.Date
+  endDate          DateTime         @db.Date
+  sessionsIncluded Int              @default(0)
+  sessionsUsed     Int              @default(0)
+  discountPercent  Decimal          @default(0) @db.Decimal(5, 2)
+  price            Decimal          @default(0) @db.Decimal(14, 2)
+  status           MembershipStatus @default(ACTIVE)
+  /// The sale that paid for it.
+  saleId           String?
+  sale             PosSale?         @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  uses             MembershipUse[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([customerId, status])
+  @@index([branchId, endDate])
+}
+
+/// One session drawn down, tied to the sale line that used it — so a void or a return puts it back.
+model MembershipUse {
+  id           String      @id @default(cuid())
+  membershipId String
+  membership   Membership  @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  saleItemId   String      @unique
+  saleItem     PosSaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  name         String
+  /// Sessions taken by this line, which is the quantity sold.
+  sessions     Int         @default(1)
+  usedAt       DateTime    @default(now())
+  /// How many of them have been put back by a void or a return. The row stays, so "used then
+  /// given back" reads differently from "never used".
+  returnedSessions Int     @default(0)
+
+  @@index([membershipId])
+}
+
+
+// --- Price lists (the PRICE_LISTS capability: wholesale, B2B) ------------------
+
+/// A set of prices for a group of customers: "Trade", "Distributor", "Staff".
+///
+/// One list may be the default, which is what a customer with no list of their own pays. Prices
+/// here are resolved **server-side** by `lib/business/pricing.ts`; the till only displays what the
+/// server says a line costs.
+model PriceList {
+  id          String          @id @default(cuid())
+  name        String          @unique
+  description String?
+  /// What everyone without a list of their own pays. At most one list carries it.
+  isDefault   Boolean         @default(false)
+  isActive    Boolean         @default(true)
+  items       PriceListItem[]
+  customers   Customer[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([isActive])
+}
+
+/// What one item costs on one list: a fixed price, a percentage off the catalogue, or both as a
+/// base for the quantity tiers underneath.
+model PriceListItem {
+  id              String      @id @default(cuid())
+  listId          String
+  list            PriceList   @relation(fields: [listId], references: [id], onDelete: Cascade)
+  variantId       String
+  variant         ItemVariant @relation("PricedOnList", fields: [variantId], references: [id], onDelete: Cascade)
+  /// A price that replaces the catalogue price. null leaves the catalogue price in charge.
+  price           Decimal?    @db.Decimal(14, 2)
+  /// Taken off the catalogue price when no fixed price is set.
+  discountPercent Decimal     @default(0) @db.Decimal(5, 2)
+  tiers           PriceTier[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([listId, variantId])
+  @@index([variantId])
+}
+
+/// Buy this many or more, pay this. The highest tier the quantity reaches is the one that applies.
+model PriceTier {
+  id              String        @id @default(cuid())
+  priceListItemId String
+  priceListItem   PriceListItem @relation(fields: [priceListItemId], references: [id], onDelete: Cascade)
+  minQuantity     Decimal       @db.Decimal(14, 3)
+  price           Decimal       @db.Decimal(14, 2)
+
+  @@unique([priceListItemId, minQuantity])
+}
+
+
+// --- Work orders (the WORK_ORDERS capability: repair shops) -------------------
+
+/// Where a job is: taken in, looked at, quoted, approved, worked on, ready, handed back.
+enum WorkOrderStatus {
+  RECEIVED
+  DIAGNOSING
+  /// A price has been given; nothing more happens until the customer says yes.
+  QUOTED
+  APPROVED
+  IN_PROGRESS
+  READY
+  DELIVERED
+  CANCELLED
+}
+
+/// One job on one customer's thing: a phone, a laptop, a car. The money for it is an ordinary POS
+/// sale, linked here — a work order is the *work*, not a second kind of invoice.
+model WorkOrder {
+  id            String          @id @default(cuid())
+  number        String          @unique
+  branchId      String
+  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  customerId    String?
+  customer      Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName  String
+  customerPhone String?
+  /// What was brought in, in the customer's words.
+  itemName      String
+  serialNumber  String?
+  faultReported String
+  /// What the shop found, once someone has looked.
+  diagnosis     String?
+  /// What the repair was quoted at, so "approved" means approved for a figure.
+  estimate      Decimal?        @db.Decimal(14, 2)
+  status        WorkOrderStatus @default(RECEIVED)
+  /// Who is doing it, where the branch keeps staff records.
+  staffId       String?
+  staff         StaffMember?    @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  promisedAt    DateTime?
+  approvedAt    DateTime?
+  deliveredAt   DateTime?
+  /// The sale that paid for it. One job, one sale.
+  saleId        String?         @unique
+  sale          PosSale?        @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  note          String?
+  createdById   String?
+  createdByName String
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([branchId, status])
+  @@index([customerId])
+}
+
+// --- Tickets (the TICKETS capability: cinema, venues) -------------------------
+
+/// A showing, a match, a session: something with a start time and a number of places.
+model TicketEvent {
+  id        String         @id @default(cuid())
+  branchId  String
+  branch    Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  startsAt  DateTime
+  endsAt    DateTime?
+  /// How many places there are. Selling the last one closes the event.
+  capacity  Int
+  /// The item rung up at the till for one place.
+  variantId String
+  variant   ItemVariant    @relation("TicketItem", fields: [variantId], references: [id], onDelete: Restrict)
+  note      String?
+  isActive  Boolean        @default(true)
+  issued    TicketIssued[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([branchId, startsAt])
+  @@index([isActive])
+}
+
+/// Places taken by one sold line. Returned places come back, so capacity is always what is left.
+model TicketIssued {
+  id         String      @id @default(cuid())
+  eventId    String
+  event      TicketEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  saleItemId String      @unique
+  saleItem   PosSaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  places     Int
+  /// Given back by a void or a return, in proportion, like a membership session.
+  returned   Int         @default(0)
+  issuedAt   DateTime    @default(now())
+
+  @@index([eventId])
+}
+
+// --- Rooms (the ROOMS capability: hotels) ------------------------------------
+
+enum StayStatus {
+  BOOKED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+model Room {
+  id          String       @id @default(cuid())
+  branchId    String
+  branch      Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name        String
+  roomType    String?
+  capacity    Int          @default(2)
+  nightlyRate Decimal      @default(0) @db.Decimal(14, 2)
+  /// The item charged for a night, so the folio's room line goes through the catalogue like
+  /// everything else. Without one, nights are added by hand.
+  variantId   String?
+  variant     ItemVariant? @relation("RoomNightItem", fields: [variantId], references: [id], onDelete: SetNull)
+  isActive    Boolean      @default(true)
+  stays       Stay[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([branchId, name])
+  @@index([branchId, isActive])
+}
+
+/// One guest in one room between two dates. The folio is a held POS sale pointing at the stay, so
+/// bar and restaurant charges reach it through the same till as everything else.
+model Stay {
+  id            String     @id @default(cuid())
+  number        String     @unique
+  branchId      String
+  branch        Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  roomId        String
+  room          Room       @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  customerId    String?
+  customer      Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  guestName     String
+  guestPhone    String?
+  checkIn       DateTime   @db.Date
+  checkOut      DateTime   @db.Date
+  nights        Int
+  /// The rate agreed when the stay was booked, not today's rate.
+  nightlyRate   Decimal    @default(0) @db.Decimal(14, 2)
+  guests        Int        @default(1)
+  status        StayStatus @default(BOOKED)
+  note          String?
+  /// The folio: a held sale that charges accumulate on, settled at check-out.
+  folioId       String?    @unique
+  folio         PosSale?   @relation("StayFolio", fields: [folioId], references: [id], onDelete: SetNull)
+  createdById   String?
+  createdByName String
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([branchId, checkIn])
+  @@index([roomId, checkIn])
+  @@index([status])
+}
+
+// --- Rentals (the RENTALS capability: equipment, venues) ----------------------
+
+enum RentalStatus {
+  OUT
+  RETURNED
+  /// Past its due date and still out.
+  OVERDUE
+  /// Not coming back: charged for and written off.
+  LOST
+}
+
+/// Something lent out and expected back. The money is an ordinary POS sale; this is the promise
+/// about the thing itself, and the stock that left the shelf.
+model Rental {
+  id            String       @id @default(cuid())
+  number        String       @unique
+  branchId      String
+  branch        Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  customerId    String?
+  customer      Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName  String
+  customerPhone String?
+  variantId     String?
+  variant       ItemVariant? @relation("RentedItem", fields: [variantId], references: [id], onDelete: SetNull)
+  itemName      String
+  quantity      Decimal      @default(1) @db.Decimal(14, 3)
+  /// Charged per day; the sale at the counter takes the days agreed up front.
+  dailyRate     Decimal      @default(0) @db.Decimal(14, 2)
+  /// Held against damage, given back when the thing comes back.
+  deposit       Decimal      @default(0) @db.Decimal(14, 2)
+  outAt         DateTime     @default(now())
+  dueAt         DateTime
+  returnedAt    DateTime?
+  status        RentalStatus @default(OUT)
+  /// What the late days came to, charged at return.
+  lateFee       Decimal      @default(0) @db.Decimal(14, 2)
+  note          String?
+  /// The sale that took the money up front, and the one that settled late fees, if any.
+  saleId        String?
+  sale          PosSale?     @relation("RentalSale", fields: [saleId], references: [id], onDelete: SetNull)
+  settledSaleId String?
+  settledSale   PosSale?     @relation("RentalSettlement", fields: [settledSaleId], references: [id], onDelete: SetNull)
+  createdById   String?
+  createdByName String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([branchId, status])
+  @@index([dueAt])
+  @@index([customerId])
+}
+
+
+// ---------------------------------------------------------------------------
+// Credit notes: reversing part or all of an issued invoice
+// ---------------------------------------------------------------------------
+
+enum CreditNoteStatus {
+  ISSUED
+  /// Issued in error and withdrawn. The record stays; the credit does not.
+  CANCELLED
+}
+
+/// A credit note against an issued invoice: goods came back, something was overcharged, part of
+/// the order was cancelled, or a discount was agreed after the fact.
+///
+/// An issued invoice is never edited or deleted, so this is how it is put right. The amounts are
+/// recomputed from the invoice's own lines, which is why the VAT reverses exactly as it was charged.
+/// Money only moves if some is actually given back, and then it moves as a **negative
+/// InvoicePayment** tagged with this note — the same path the money came in on.
+model CreditNote {
+  id             String           @id @default(cuid())
+  number         String           @unique
+  invoiceId      String
+  invoice        Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  /// Copied from the invoice so the note can be listed and reported on by customer.
+  customerId     String
+  customer       Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  date           DateTime         @db.Date
+  /// Why it was issued — a credit note without a reason is a hole in the books.
+  reason         String
+  subtotal       Decimal          @default(0) @db.Decimal(14, 2)
+  discountTotal  Decimal          @default(0) @db.Decimal(14, 2)
+  vatTotal       Decimal          @default(0) @db.Decimal(14, 2)
+  grandTotal     Decimal          @default(0) @db.Decimal(14, 2)
+  /// How much of it was handed back as money; the rest reduces what the customer owes.
+  refundedTotal  Decimal          @default(0) @db.Decimal(14, 2)
+  status         CreditNoteStatus @default(ISSUED)
+  internalNotes  String?
+  cancelledAt    DateTime?
+  cancelledByName String?
+  cancelReason   String?
+  items          CreditNoteItem[]
+  /// The refund rows this note caused, if any.
+  payments       InvoicePayment[]
+  createdById    String?
+  createdByName  String
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([invoiceId])
+  @@index([customerId])
+  @@index([date])
+  @@index([status])
+}
+
+/// One credited line, snapshotted from the invoice line it reverses.
+model CreditNoteItem {
+  id              String       @id @default(cuid())
+  creditNoteId    String
+  creditNote      CreditNote   @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  /// The invoice line this credits; its creditedQuantity is what stops over-crediting.
+  invoiceItemId   String?
+  invoiceItem     InvoiceItem? @relation(fields: [invoiceItemId], references: [id], onDelete: SetNull)
+  sortOrder       Int          @default(0)
+  description     String
+  quantity        Decimal      @db.Decimal(12, 2)
+  unitPrice       Decimal      @db.Decimal(14, 2)
+  discountPercent Decimal      @default(0) @db.Decimal(5, 2)
+  vatRate         Decimal      @default(0) @db.Decimal(5, 2)
+  lineSubtotal    Decimal      @db.Decimal(14, 2)
+  lineDiscount    Decimal      @db.Decimal(14, 2)
+  lineVat         Decimal      @db.Decimal(14, 2)
+  lineTotal       Decimal      @db.Decimal(14, 2)
+
+  @@index([creditNoteId])
+}
+
+
+// ---------------------------------------------------------------------------
+// Goods receipts: what physically arrived from a purchase
+// ---------------------------------------------------------------------------
+
+enum PurchaseReceiptStatus {
+  ISSUED
+  /// Keyed in error and withdrawn. The record stays; the stock goes back.
+  CANCELLED
+}
+
+/// One delivery against a purchase.
+///
+/// This is the only way stock arrives from Procurement, and it is a document in its own right
+/// because deliveries come in parts: 60 boxes today, 40 next week, each into a named branch at the
+/// cost that was actually paid. The stock itself moves through `applyStockMovement`, like every
+/// other quantity in this app.
+model PurchaseReceipt {
+  id             String                @id @default(cuid())
+  number         String                @unique
+  purchaseId     String
+  purchase       Purchase              @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  /// Stock is per branch, so a delivery always lands somewhere.
+  branchId       String
+  branch         Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  receivedAt     DateTime              @default(now())
+  /// Cash-basis date for the stock movement, matching how the rest of the app dates things.
+  date           DateTime              @db.Date
+  status         PurchaseReceiptStatus @default(ISSUED)
+  note           String?
+  cancelReason   String?
+  cancelledAt    DateTime?
+  cancelledByName String?
+  receivedById   String?
+  receivedByName String
+  items          PurchaseReceiptItem[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@index([purchaseId])
+  @@index([branchId, receivedAt])
+  @@index([status])
+}
+
+/// One line of a delivery, snapshotted: what arrived, how much, and what it cost.
+model PurchaseReceiptItem {
+  id             String          @id @default(cuid())
+  receiptId      String
+  receipt        PurchaseReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  /// The purchase line this fulfils; its receivedQuantity is what stops over-receiving.
+  purchaseItemId String?
+  purchaseItem   PurchaseItem?   @relation(fields: [purchaseItemId], references: [id], onDelete: SetNull)
+  variantId      String?
+  variant        ItemVariant?    @relation("ReceivedItem", fields: [variantId], references: [id], onDelete: SetNull)
+  name           String
+  unit           String
+  quantity       Decimal         @db.Decimal(14, 3)
+  /// Cost per unit excluding VAT — VAT is recoverable, so it never belongs in a stock value.
+  unitCost       Decimal         @default(0) @db.Decimal(14, 2)
+  sortOrder      Int             @default(0)
+
+  @@index([receiptId])
 }

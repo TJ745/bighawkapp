@@ -7,6 +7,7 @@ import { authorize, authorizeSuperAdmin } from "@/lib/auth/session";
 import { formDataToObject, parseInput, runAction, type ActionResult } from "@/lib/actions";
 import { deleteStoredFile, fileFromFormData, IMAGE_TYPES, MAX_IMAGE_BYTES, storeFile } from "@/lib/storage";
 import { getCompanySettings, getEmailSettings } from "@/lib/data/settings";
+import { sellerProblems } from "@/lib/zatca/seller";
 import { getSmtpConfig, isSmtpUsable, sendEmail, verifySmtp } from "@/lib/email/mailer";
 import {
   companySettingsSchema,
@@ -21,6 +22,7 @@ import {
   securitySettingsSchema,
   stylingSettingsSchema,
   vatSettingsSchema,
+  zatcaSettingsSchema,
 } from "@/lib/validation/settings";
 
 const SINGLETON_ID = "default";
@@ -51,6 +53,38 @@ export async function updateCompanySettings(formData: FormData): Promise<ActionR
     if ((stored || removeLogo) && current?.logoUrl?.startsWith("/api/files/")) {
       await deleteStoredFile(current.logoUrl.slice("/api/files/".length));
     }
+    revalidateAll();
+  });
+}
+
+/**
+ * Switching Saudi e-invoicing on or off.
+ *
+ * The seller details are checked **here**, not when a document prints: a QR code built from
+ * half-filled settings scans perfectly and states the wrong thing, which is far worse than no QR
+ * at all. So the mode cannot be turned on until the company's details are complete, and once it is
+ * on every document can rely on them being there. Turning it off is always allowed.
+ */
+export async function updateZatcaSettings(input: unknown): Promise<ActionResult> {
+  return runAction(async () => {
+    await authorize("SETTINGS", "edit");
+    const data = parseInput(zatcaSettingsSchema, input);
+
+    if (data.mode !== "OFF") {
+      const company = await getCompanySettings();
+      const problems = sellerProblems(company);
+      if (problems.length > 0) {
+        throw new BusinessError(
+          `Settings → Company is not complete enough to issue Saudi tax invoices. ${problems.join(" ")}`,
+        );
+      }
+    }
+
+    await db.zatcaSettings.upsert({
+      where: { id: SINGLETON_ID },
+      update: { mode: data.mode },
+      create: { id: SINGLETON_ID, mode: data.mode },
+    });
     revalidateAll();
   });
 }

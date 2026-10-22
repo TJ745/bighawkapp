@@ -41,6 +41,27 @@ export const getCompanySettings = cache(async () =>
 
 export type CompanySettings = Awaited<ReturnType<typeof getCompanySettings>>;
 
+/** Saudi e-invoicing settings (Settings → E-invoicing). Creates the row on first access. */
+export const getZatcaSettings = cache(async () =>
+  readSingleton(
+    () => db.zatcaSettings.findUnique({ where: { id: SINGLETON_ID } }),
+    () => db.zatcaSettings.create({ data: { id: SINGLETON_ID } }),
+  ),
+);
+
+export type ZatcaSettings = Awaited<ReturnType<typeof getZatcaSettings>>;
+
+/**
+ * Whether documents should carry ZATCA's fields and QR code right now.
+ *
+ * Asked as one question rather than comparing the mode at each call site, because every document
+ * — invoice PDF, credit note, till receipt — has to answer it the same way.
+ */
+export const isZatcaActive = cache(async (): Promise<boolean> => {
+  const { mode } = await getZatcaSettings();
+  return mode !== "OFF";
+});
+
 /** All other settings sections, with Decimals converted to numbers for client use. */
 export const getAppSettings = cache(async () => {
   const row = await readSingleton(

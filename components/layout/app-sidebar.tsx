@@ -21,13 +21,21 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import { DEFAULT_COMPANY_ICON, NAV_ITEMS, type NavItem } from "./nav-config";
-import type { PermissionModule } from "@/lib/generated/prisma/enums";
+import { CompanyMenu, type BranchOption } from "./company-menu";
+import { visibleNavItems, type NavItem } from "./nav-config";
+import type { AppModule, PermissionModule } from "@/lib/generated/prisma/enums";
+import type { PosCapability } from "@/lib/platform/pos-types";
 
 type AppSidebarProps = {
   branding: { companyName: string; logoUrl: string | null };
-  // Modules the current user may view. `null` means unrestricted (Super Admin / Admin).
-  visibleModules: PermissionModule[] | null;
+  /** Active branches of this company; empty when POS is off. The company block chooses between them. */
+  branches: BranchOption[];
+  currentBranchId: string | null;
+  // Permission modules the current user may view.
+  visibleModules: PermissionModule[];
+  // Product modules the company subscribes to, and the industry capabilities of the current branch.
+  enabledModules: AppModule[];
+  capabilities: PosCapability[];
 };
 
 // Hover stays neutral; only the current page wears the brand tint, so the two never look alike.
@@ -41,39 +49,18 @@ function isItemActive(item: NavItem, pathname: string) {
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
-export function AppSidebar({ branding, visibleModules }: AppSidebarProps) {
+export function AppSidebar({ branding, branches, currentBranchId, visibleModules, enabledModules, capabilities }: AppSidebarProps) {
   const pathname = usePathname();
   const { setOpenMobile } = useSidebar();
-  const CompanyIcon = DEFAULT_COMPANY_ICON;
 
-  const items = NAV_ITEMS.filter((item) => !item.module || visibleModules === null || visibleModules.includes(item.module));
+  const items = visibleNavItems({ visibleModules, enabledModules, capabilities });
   const closeOnMobile = () => setOpenMobile(false);
 
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="px-4 py-3 group-data-[collapsible=icon]:p-2">
-        {/* Brand block: a quiet mark, never a coloured wash behind an uploaded logo. */}
-        <Link
-          href="/dashboard"
-          onClick={closeOnMobile}
-          className="flex items-center gap-2.5 rounded-lg p-1 transition-colors hover:bg-muted group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0"
-        >
-          {branding.logoUrl ? (
-            <span className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-card p-1 group-data-[collapsible=icon]:size-8">
-              {/* Plain <img>: the file route needs the session cookie, which the image optimizer would not send. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={branding.logoUrl} alt="" className="size-full object-contain" />
-            </span>
-          ) : (
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground group-data-[collapsible=icon]:size-8">
-              <CompanyIcon className="size-[18px]" />
-            </span>
-          )}
-          <span className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
-            <span className="truncate text-sm font-semibold tracking-tight">{branding.companyName}</span>
-            <span className="truncate text-xs text-muted-foreground">Business Management</span>
-          </span>
-        </Link>
+        {/* The company, and the branch being worked in — branches belong to a company. */}
+        <CompanyMenu branding={branding} branches={branches} currentBranchId={currentBranchId} onNavigate={closeOnMobile} />
       </SidebarHeader>
 
       <SidebarContent>

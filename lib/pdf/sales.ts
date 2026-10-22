@@ -1,6 +1,9 @@
 import "server-only";
+import type { CreditNoteDetail } from "@/lib/data/credit-notes";
 import type { DocumentCustomer, DocumentItem, InvoiceDetail, QuotationDetail } from "@/lib/data/sales";
 import { getFormatters } from "@/lib/settings/formatters";
+import { zatcaStamp } from "@/lib/data/zatca";
+import { ZatcaLabel } from "@/lib/zatca/labels";
 import { getCompanyBankLines, getPdfBranding } from "./branding";
 import { renderDocumentPdf, type PdfDocumentData } from "./document-pdf";
 
@@ -28,11 +31,15 @@ export function itemRows(items: DocumentItem[], f: Formatters) {
   }));
 }
 
+/**
+ * The totals block. The Arabic twins are always attached; the renderer prints them only when the
+ * document is a tax invoice, so one list of totals serves both cases.
+ */
 export function totalRows(t: { subtotal: number; discountTotal: number; vatTotal: number; grandTotal: number }, f: Formatters) {
-  const rows: PdfDocumentData["totals"] = [{ label: "Subtotal", value: f.money(t.subtotal) }];
-  if (t.discountTotal > 0) rows.push({ label: "Discount", value: `- ${f.money(t.discountTotal)}` });
-  rows.push({ label: "VAT", value: f.money(t.vatTotal) });
-  rows.push({ label: "Grand total", value: f.money(t.grandTotal), emphasis: true });
+  const rows: PdfDocumentData["totals"] = [{ label: "Subtotal", labelAr: ZatcaLabel.subtotal.ar, value: f.money(t.subtotal) }];
+  if (t.discountTotal > 0) rows.push({ label: "Discount", labelAr: ZatcaLabel.discount.ar, value: `- ${f.money(t.discountTotal)}` });
+  rows.push({ label: "VAT", labelAr: ZatcaLabel.vatTotal.ar, value: f.money(t.vatTotal) });
+  rows.push({ label: "Grand total", labelAr: ZatcaLabel.grandTotal.ar, value: f.money(t.grandTotal), emphasis: true });
   return rows;
 }
 
@@ -59,7 +66,14 @@ export async function renderQuotationPdf(q: QuotationDetail): Promise<Buffer> {
 }
 
 export async function renderInvoicePdf(inv: InvoiceDetail): Promise<Buffer> {
-  const [branding, f, bankLines] = await Promise.all([getPdfBranding(), getFormatters(), getCompanyBankLines()]);
+  const [branding, f, bankLines, stamp] = await Promise.all([
+    getPdfBranding(),
+    getFormatters(),
+    getCompanyBankLines(),
+    // Standard or simplified is decided by the customer's VAT number, and the QR encodes the
+    // invoice's own stored figures.
+    zatcaStamp({ document: "INVOICE", buyer: inv.customer, issuedAt: inv.date, totalWithVat: inv.grandTotal, vatTotal: inv.vatTotal }),
+  ]);
 
   const paymentLines: string[] = [];
   if (inv.depositAmount > 0) {
@@ -80,11 +94,13 @@ export async function renderInvoicePdf(inv: InvoiceDetail): Promise<Buffer> {
   }
 
   const data: PdfDocumentData = {
-    title: "INVOICE",
+    title: stamp?.title.en ?? "INVOICE",
+    titleAr: stamp?.title.ar,
+    qr: stamp?.qr,
     number: inv.number,
     meta: [
-      { label: "Date", value: f.date(inv.date) },
-      { label: "Due date", value: f.date(inv.dueDate) },
+      { label: "Date", labelAr: ZatcaLabel.date.ar, value: f.date(inv.date) },
+      { label: "Due date", labelAr: ZatcaLabel.dueDate.ar, value: f.date(inv.dueDate) },
       ...(inv.quotation ? [{ label: "Quotation", value: inv.quotation.number }] : []),
     ],
     partyLabel: "Bill to",
@@ -97,6 +113,52 @@ export async function renderInvoicePdf(inv: InvoiceDetail): Promise<Buffer> {
       ...termsSection(inv.terms),
     ],
     statusNote: inv.status === "PAID" ? "PAID" : undefined,
+  };
+  return renderDocumentPdf(branding, data);
+}
+
+/**
+ * A credit note is a tax document in its own right, so it carries its own number, the invoice it
+ * reverses, and the VAT it gives back. The amounts are shown as positive figures under a title
+ * that says what they are, which is how a credit note is read.
+ */
+export async function renderCreditNotePdf(note: CreditNoteDetail): Promise<Buffer> {
+  const [branding, f, stamp] = await Promise.all([
+    getPdfBranding(),
+    getFormatters(),
+    zatcaStamp({ document: "CREDIT_NOTE", buyer: note.customer, issuedAt: note.date, totalWithVat: note.grandTotal, vatTotal: note.vatTotal }),
+  ]);
+
+  const totals = totalRows(note, f);
+  const sections: PdfDocumentData["sections"] = [
+    {
+      title: "Why this credit note was issued",
+      lines: [
+        note.reason,
+        `Against invoice ${note.invoice.number} dated ${f.date(note.invoice.date)}.`,
+        note.refundedTotal > 0
+          ? `${f.money(note.refundedTotal)} was refunded${note.grandTotal > note.refundedTotal ? `; ${f.money(note.grandTotal - note.refundedTotal)} was credited against the account` : ""}.`
+          : "The full amount was credited against the account.",
+        ...(note.status === "CANCELLED" ? [`This credit note was cancelled${note.cancelReason ? `: ${note.cancelReason}` : "."}`] : []),
+      ],
+    },
+  ];
+
+  const data: PdfDocumentData = {
+    title: "CREDIT NOTE",
+    titleAr: stamp?.title.ar,
+    qr: stamp?.qr,
+    number: note.number,
+    meta: [
+      { label: "Date", labelAr: ZatcaLabel.date.ar, value: f.date(note.date) },
+      { label: "Against invoice", value: note.invoice.number },
+      ...(note.status === "CANCELLED" ? [{ label: "Status", value: "Cancelled" }] : []),
+    ],
+    partyLabel: "Credit to",
+    partyLines: partyLines(note.customer),
+    items: itemRows(note.items, f),
+    totals,
+    sections,
   };
   return renderDocumentPdf(branding, data);
 }

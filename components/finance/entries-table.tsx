@@ -44,6 +44,7 @@ export function EntriesTable({ kind, entries, categories, accounts, today, canCr
   const typeOptions = isIncome
     ? [
         { value: "customer-payment", label: "Customer payments" },
+        { value: "pos-sale", label: "POS sales" },
         { value: "other-income", label: "Other income" },
       ]
     : [
@@ -52,9 +53,22 @@ export function EntriesTable({ kind, entries, categories, accounts, today, canCr
       ];
 
   const total = entries.reduce((sum, e) => sum + e.amount, 0);
-  const isDocumentPayment = (e: Entry) => e.kind === "CUSTOMER_PAYMENT" || e.kind === "SUPPLIER_PAYMENT";
+  const isDocumentPayment = (e: Entry) => e.kind === "CUSTOMER_PAYMENT" || e.kind === "SUPPLIER_PAYMENT" || e.kind === "POS_SALE";
+  /**
+   * An advance is not an entry anyone edits here — it is managed on the customer it belongs to, so
+   * the row links there instead of opening a dialog that cannot save it. A type guard rather than a
+   * boolean, so the customer it belongs to is reachable on the narrowed row.
+   */
+  const isAdvance = (e: Entry): e is IncomeEntry & { kind: "CUSTOMER_ADVANCE" | "ADVANCE_REFUND" } =>
+    e.kind === "CUSTOMER_ADVANCE" || e.kind === "ADVANCE_REFUND";
   const documentHref = (e: Entry) =>
-    "invoiceId" in e && e.invoiceId ? `/sales/invoices/${e.invoiceId}` : "purchaseId" in e && e.purchaseId ? `/procurement/purchases/${e.purchaseId}` : "#";
+    "invoiceId" in e && e.invoiceId
+      ? `/sales/invoices/${e.invoiceId}`
+      : "posSaleId" in e && e.posSaleId
+        ? `/pos/sales/${e.posSaleId}`
+        : "purchaseId" in e && e.purchaseId
+          ? `/procurement/purchases/${e.purchaseId}`
+          : "#";
 
   return (
     <div className="space-y-4">
@@ -139,7 +153,19 @@ export function EntriesTable({ kind, entries, categories, accounts, today, canCr
                   <TableCell className="whitespace-nowrap">{format.date(e.date)}</TableCell>
                   <TableCell className="hidden sm:table-cell">
                     <StatusBadge tone={isDocumentPayment(e) ? "info" : "neutral"}>
-                      {e.kind === "CUSTOMER_PAYMENT" ? "Customer payment" : e.kind === "OTHER_INCOME" ? "Other income" : e.kind === "SUPPLIER_PAYMENT" ? "Supplier payment" : "General expense"}
+                      {e.kind === "CUSTOMER_PAYMENT"
+                        ? "Customer payment"
+                        : e.kind === "CUSTOMER_ADVANCE"
+                        ? "Customer advance"
+                        : e.kind === "ADVANCE_REFUND"
+                        ? "Advance returned"
+                        : e.kind === "POS_SALE"
+                          ? "POS sale"
+                          : e.kind === "OTHER_INCOME"
+                            ? "Other income"
+                            : e.kind === "SUPPLIER_PAYMENT"
+                              ? "Supplier payment"
+                              : "General expense"}
                     </StatusBadge>
                   </TableCell>
                   {!isIncome ? <TableCell className="hidden text-muted-foreground md:table-cell">{e.category}</TableCell> : null}
@@ -157,11 +183,18 @@ export function EntriesTable({ kind, entries, categories, accounts, today, canCr
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {isDocumentPayment(e) ? (
+                        {isAdvance(e) ? (
+                          <DropdownMenuItem asChild>
+                            <Link href={`/customers/${e.customerId ?? ""}`}>
+                              <Eye />
+                              View customer
+                            </Link>
+                          </DropdownMenuItem>
+                        ) : isDocumentPayment(e) ? (
                           <DropdownMenuItem asChild>
                             <Link href={documentHref(e)}>
                               <Eye />
-                              View {e.kind === "CUSTOMER_PAYMENT" ? "invoice" : "purchase"}
+                              View {e.kind === "CUSTOMER_PAYMENT" ? "invoice" : e.kind === "POS_SALE" ? "sale" : "purchase"}
                             </Link>
                           </DropdownMenuItem>
                         ) : (

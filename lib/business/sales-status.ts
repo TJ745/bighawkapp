@@ -20,6 +20,8 @@ export type InvoiceStatusInput = {
   dueDate: Date;
   grandTotal: number;
   paidTotal: number;
+  /** Reversed by credit notes. It settles the invoice without any money arriving. */
+  creditedTotal: number;
   depositAmount: number;
   sentAt: Date | null;
 };
@@ -29,13 +31,17 @@ export type InvoiceStatusInput = {
  * the full balance after the due date, or an unpaid deposit after the invoice date.
  */
 export function deriveInvoiceStatus(inv: InvoiceStatusInput, today: string): InvoiceStatus {
-  const remaining = inv.grandTotal - inv.paidTotal;
-  if (inv.grandTotal > 0 && remaining <= 0) return "PAID";
+  const remaining = inv.grandTotal - inv.paidTotal - inv.creditedTotal;
+  if (inv.grandTotal > 0 && remaining <= 0) {
+    // Settled by credit alone was never paid, and should not read as if it had been.
+    return inv.creditedTotal > 0 && inv.paidTotal <= 0 ? "CREDITED" : "PAID";
+  }
   const issued = inv.status !== "DRAFT" || inv.sentAt !== null || inv.paidTotal > 0;
   if (!issued) return "DRAFT";
 
   const pastDue = dateOnly(inv.dueDate) < today && remaining > 0;
-  const depositLate = inv.depositAmount > 0 && dateOnly(inv.date) < today && inv.paidTotal < inv.depositAmount;
+  // A deposit that has been credited away is no longer late.
+  const depositLate = inv.depositAmount > 0 && dateOnly(inv.date) < today && inv.paidTotal + inv.creditedTotal < inv.depositAmount;
   if (pastDue || depositLate) return "OVERDUE";
   return inv.paidTotal > 0 ? "PARTIALLY_PAID" : "SENT";
 }
@@ -54,6 +60,7 @@ export const INVOICE_STATUS: Record<InvoiceStatus, { label: string; tone: Status
   PARTIALLY_PAID: { label: "Partially Paid", tone: "warning" },
   PAID: { label: "Paid", tone: "success" },
   OVERDUE: { label: "Overdue", tone: "danger" },
+  CREDITED: { label: "Credited", tone: "neutral" },
 };
 
 // --- Manual status changes ---------------------------------------------------

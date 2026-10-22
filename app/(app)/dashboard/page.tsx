@@ -21,17 +21,18 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
   const auth = await requireAuth();
   const raw = await searchParams;
   const todayDate = await today();
-  await Promise.all([refreshSalesStatuses(), refreshProcurementStatuses()]);
+  const hasBusinessManagement = auth.hasModule("BUSINESS_MANAGEMENT");
+  if (hasBusinessManagement) await Promise.all([refreshSalesStatuses(), refreshProcurementStatuses()]);
 
   // Figures cover this month; the chart shows a trailing trend so it is never a single point.
   const range = presetRange("this-month", todayDate);
   const granularity = raw.granularity === "daily" ? "daily" : "monthly";
   const chartRange = granularity === "daily" ? trailingRange(todayDate, "days", 30) : trailingRange(todayDate, "months", 12);
 
-  const canSales = auth.can("SALES", "view");
-  const canProcurement = auth.can("PROCUREMENT", "view");
-  const canFinance = auth.can("FINANCE", "view");
-  const canProjects = auth.can("PROJECTS", "view");
+  const canSales = hasBusinessManagement && auth.can("SALES", "view");
+  const canProcurement = hasBusinessManagement && auth.can("PROCUREMENT", "view");
+  const canFinance = hasBusinessManagement && auth.can("FINANCE", "view");
+  const canProjects = hasBusinessManagement && auth.can("PROJECTS", "view");
   const canSeeMoney = canSales || canProcurement || canFinance;
 
   // Only fetch what the user may see — these lists are sent to the client.
@@ -69,7 +70,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
   ]);
 
   const actions: QuickAction[] = [
-    ...(auth.can("SALES", "create")
+    ...(canSales && auth.can("SALES", "create")
       ? [
           {
             label: "New Sale",
@@ -78,7 +79,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
           },
         ]
       : []),
-    ...(auth.can("FINANCE", "create")
+    ...(canFinance && auth.can("FINANCE", "create")
       ? [
           {
             label: "New Expense",
@@ -87,7 +88,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
           },
         ]
       : []),
-    ...(auth.can("CUSTOMERS", "create")
+    ...(hasBusinessManagement && auth.can("CUSTOMERS", "create")
       ? [
           {
             label: "New Customer",
@@ -123,7 +124,9 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
         />
       ) : (
         <p className="text-sm text-muted-foreground">
-          You don&apos;t have access to the financial modules yet. Ask your administrator if you need them.
+          {hasBusinessManagement
+            ? "You don't have access to the financial modules yet. Ask your administrator if you need them."
+            : "Business Management is not enabled for your company. Ask your BigHawk administrator about it."}
         </p>
       )}
     </>

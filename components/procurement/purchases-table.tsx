@@ -8,6 +8,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ListToolbar } from "@/components/shared/list-toolbar";
+import { ExportButton } from "@/components/shared/export-button";
+import { exportPurchases } from "@/actions/export";
 import { Pagination } from "@/components/shared/pagination";
 import { StatusMenu, statusChoices } from "@/components/shared/status-menu";
 import { useFormat } from "@/components/providers/format-provider";
@@ -55,6 +57,7 @@ export function PurchasesTable({ items, total, page, hasQuery, canCreate, canEdi
     <div className="space-y-4">
       {!embedded ? (
         <ListToolbar filters={FILTERS} searchPlaceholder="Search by number, reference or supplier">
+          <ExportButton action={exportPurchases} />
           {newButton}
         </ListToolbar>
       ) : null}

@@ -38,6 +38,26 @@ const BANK_FIELDS: { name: keyof CompanySettingsInput; label: string }[] = [
   { name: "accountNumber", label: "Account number" },
 ];
 
+/**
+ * What a Saudi tax invoice must say about the seller, beyond the details above.
+ *
+ * A tax invoice is issued in Arabic and carries a national address broken into its parts, so these
+ * are separate fields rather than one block of text — Settings → E-invoicing cannot be switched on
+ * until they are filled in.
+ */
+const ZATCA_FIELDS: { name: keyof CompanySettingsInput; label: string; description?: string; wide?: boolean; multiline?: boolean }[] = [
+  { name: "companyNameAr", label: "Company name in Arabic", description: "The legal name as registered." },
+  { name: "buildingNumber", label: "Building number", description: "Four digits." },
+  { name: "streetName", label: "Street name" },
+  { name: "district", label: "District" },
+  { name: "city", label: "City" },
+  { name: "postalCode", label: "Postal code", description: "Five digits." },
+  { name: "additionalNumber", label: "Additional number", description: "Four digits, if the address has one." },
+  { name: "region", label: "Region or province" },
+  { name: "countryCode", label: "Country code", description: "Two letters, e.g. SA." },
+  { name: "addressAr", label: "Address in Arabic", description: "Printed on documents. Left blank, the parts above are used.", wide: true, multiline: true },
+];
+
 export function CompanyForm({ company, canEdit }: { company: CompanySettings; canEdit: boolean }) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
@@ -48,7 +68,7 @@ export function CompanyForm({ company, canEdit }: { company: CompanySettings; ca
   const form = useForm<CompanySettingsInput, unknown, CompanySettingsValues>({
     resolver: zodResolver(companySettingsSchema),
     defaultValues: Object.fromEntries(
-      [...FIELDS, ...BANK_FIELDS].map((f) => [f.name, (company[f.name as keyof CompanySettings] as string | null) ?? ""]),
+      [...FIELDS, ...BANK_FIELDS, ...ZATCA_FIELDS].map((f) => [f.name, (company[f.name as keyof CompanySettings] as string | null) ?? ""]),
     ) as CompanySettingsInput,
   });
   const { errors, isSubmitting } = form.formState;
@@ -163,6 +183,33 @@ export function CompanyForm({ company, canEdit }: { company: CompanySettings; ca
           {BANK_FIELDS.map((f) => (
             <FormField key={f.name} label={f.label} htmlFor={`company-${f.name}`} error={errors[f.name]?.message}>
               <Input id={`company-${f.name}`} disabled={!canEdit} {...form.register(f.name)} />
+            </FormField>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Saudi tax invoice details</CardTitle>
+          <CardDescription>
+            Needed before e-invoicing can be switched on: a tax invoice is issued in Arabic and carries the seller&apos;s national address in parts.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5 sm:grid-cols-2">
+          {ZATCA_FIELDS.map((f) => (
+            <FormField
+              key={f.name}
+              label={f.label}
+              htmlFor={`company-${f.name}`}
+              description={f.description}
+              error={errors[f.name]?.message}
+              className={f.wide ? "sm:col-span-2" : undefined}
+            >
+              {f.multiline ? (
+                <Textarea id={`company-${f.name}`} rows={2} dir="rtl" disabled={!canEdit} {...form.register(f.name)} />
+              ) : (
+                <Input id={`company-${f.name}`} dir={f.name === "companyNameAr" ? "rtl" : undefined} disabled={!canEdit} {...form.register(f.name)} />
+              )}
             </FormField>
           ))}
         </CardContent>

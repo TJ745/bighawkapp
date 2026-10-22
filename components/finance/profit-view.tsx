@@ -31,6 +31,7 @@ export function ProfitView({ totals, accounts, today }: Props) {
           description="Money that came in."
           rows={[
             { label: "Customer payments", value: totals.customerPayments },
+            { label: "POS sales", value: totals.posSales },
             { label: "Other income", value: totals.otherIncome },
           ]}
           total={totals.totalIncome}

@@ -5,6 +5,7 @@ import type { InvoiceStatus, QuotationStatus } from "@/lib/generated/prisma/enum
 import { num } from "@/lib/decimal";
 import { parseDateOnly, todayInTimeZone } from "@/lib/dates";
 import { paginate, type ListParams } from "@/lib/list-params";
+import { round2 } from "@/lib/business/totals";
 import { fileUrl } from "@/lib/storage";
 import { getAppSettings, getRegionalSettings } from "./settings";
 
@@ -26,11 +27,12 @@ export async function refreshSalesStatuses() {
     where: { status: { in: ["SENT", "PARTIALLY_PAID"] }, dueDate: { lt: todayDate } },
     data: { status: "OVERDUE" },
   });
-  // Unpaid deposit after the invoice date (column-to-column comparison needs SQL).
+  // Unpaid deposit after the invoice date (column-to-column comparison needs SQL). A deposit that
+  // has been credited away is not late, which is why the credit counts towards it here too.
   await db.$executeRaw`
     UPDATE "Invoice" SET "status" = 'OVERDUE'
     WHERE "status" IN ('SENT', 'PARTIALLY_PAID') AND "depositAmount" > 0
-      AND "date" < ${todayDate}::date AND "paidTotal" < "depositAmount"`;
+      AND "date" < ${todayDate}::date AND "paidTotal" + "creditedTotal" < "depositAmount"`;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +133,7 @@ export async function listQuotations(params: ListParams, customerId?: string, pr
     db.quotation.findMany({
       where,
       orderBy: [{ date: "desc" }, { number: "desc" }],
-      ...paginate(params.page),
+      ...paginate(params),
       select: {
         id: true,
         number: true,
@@ -212,7 +214,7 @@ export async function listInvoices(params: ListParams, customerId?: string, proj
     db.invoice.findMany({
       where,
       orderBy: [{ date: "desc" }, { number: "desc" }],
-      ...paginate(params.page),
+      ...paginate(params),
       select: {
         id: true,
         number: true,
@@ -221,6 +223,7 @@ export async function listInvoices(params: ListParams, customerId?: string, proj
         status: true,
         grandTotal: true,
         paidTotal: true,
+        creditedTotal: true,
         customer: { select: { id: true, name: true, email: true } },
       },
     }),
@@ -231,7 +234,8 @@ export async function listInvoices(params: ListParams, customerId?: string, proj
       ...r,
       grandTotal: num(r.grandTotal),
       paidTotal: num(r.paidTotal),
-      remaining: num(r.grandTotal) - num(r.paidTotal),
+      creditedTotal: num(r.creditedTotal),
+      remaining: round2(num(r.grandTotal) - num(r.paidTotal) - num(r.creditedTotal)),
     })),
     total,
   };
@@ -258,6 +262,7 @@ export async function getInvoice(id: string) {
   if (!row) return null;
   const grandTotal = num(row.grandTotal);
   const paidTotal = num(row.paidTotal);
+  const creditedTotal = num(row.creditedTotal);
   return {
     ...row,
     subtotal: num(row.subtotal),
@@ -265,7 +270,9 @@ export async function getInvoice(id: string) {
     vatTotal: num(row.vatTotal),
     grandTotal,
     paidTotal,
-    remaining: grandTotal - paidTotal,
+    creditedTotal,
+    // Credit notes settle an invoice without money arriving, so they count here too.
+    remaining: round2(grandTotal - paidTotal - creditedTotal),
     depositPercent: num(row.depositPercent),
     depositAmount: num(row.depositAmount),
     items: row.items.map(mapItem),

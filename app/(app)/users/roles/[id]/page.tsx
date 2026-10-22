@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { RoleForm } from "@/components/users/role-form";
 import { requirePermission } from "@/lib/auth/session";
 import { getRole } from "@/lib/data/users";
+import { permissionModulesFor } from "@/lib/platform/modules";
 
 export const metadata: Metadata = { title: "Role" };
 
@@ -21,7 +22,7 @@ export default async function RolePage({ params }: PageProps<"/users/roles/[id]"
         title={role.name}
         description={canEdit ? "Adjust what this role can access." : "Permissions for this role."}
       />
-      <RoleForm role={role} readOnly={!canEdit} />
+      <RoleForm role={role} readOnly={!canEdit} shownModules={permissionModulesFor(auth.enabledModules)} />
     </>
   );
 }

@@ -88,7 +88,7 @@ export async function listSupplierQuotations(params: ListParams, supplierId?: st
     db.supplierQuotation.findMany({
       where,
       orderBy: [{ date: "desc" }, { number: "desc" }],
-      ...paginate(params.page),
+      ...paginate(params),
       select: {
         id: true,
         number: true,
@@ -172,7 +172,7 @@ export async function listPurchases(params: ListParams, scope?: { supplierId?: s
     db.purchase.findMany({
       where,
       orderBy: [{ date: "desc" }, { number: "desc" }],
-      ...paginate(params.page),
+      ...paginate(params),
       select: {
         id: true,
         number: true,

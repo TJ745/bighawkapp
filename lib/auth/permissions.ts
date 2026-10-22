@@ -8,6 +8,7 @@ export const PERMISSION_MODULES: { value: PermissionModule; label: string }[] = 
   { value: "FINANCE", label: "Finance" },
   { value: "USERS", label: "Users & Roles" },
   { value: "SETTINGS", label: "Settings" },
+  { value: "POS", label: "Point of Sale" },
 ];
 
 export const PERMISSION_ACTIONS = ["view", "create", "edit", "delete"] as const;

@@ -8,9 +8,12 @@ import { round2 } from "./totals";
 
 /**
  * Single source of truth for money in / money out.
- * Income  = customer invoice payments + other income.
+ * Income  = customer invoice payments + POS takings + other income.
  * Expense = supplier purchase payments + general expenses.
  * Everything is cash-based on the payment/entry date, so Finance and the Dashboard agree.
+ *
+ * POS sales are paid on the spot, so their payments are income exactly like an invoice payment:
+ * one more source here rather than a parallel set of figures.
  */
 
 export function dateWhere(range: DateRange): Prisma.DateTimeFilter | undefined {
@@ -23,6 +26,7 @@ export function dateWhere(range: DateRange): Prisma.DateTimeFilter | undefined {
 
 export type FinanceTotals = {
   customerPayments: number;
+  posSales: number;
   otherIncome: number;
   totalIncome: number;
   supplierPayments: number;
@@ -31,26 +35,47 @@ export type FinanceTotals = {
   profit: number;
 };
 
+/**
+ * Payment rows that represent cash actually arriving.
+ *
+ * A payment funded by a customer advance is **not** one: that money came in when the advance was
+ * taken and is counted there. Including it here would show the same riyal as income twice and
+ * overstate every bank balance by the value of every deposit ever taken — so this filter belongs
+ * on every read of `invoicePayment` that means "money in".
+ */
+const CASH_PAYMENTS = { customerAdvanceId: null } as const;
+
+/** Advances that still stand. A cancelled one was keyed in error and never counted. */
+const LIVE_ADVANCES = { status: { not: "CANCELLED" } } as const;
+
 export async function getFinanceTotals(range: DateRange): Promise<FinanceTotals> {
   const date = dateWhere(range);
-  const [cp, oi, sp, ge] = await Promise.all([
-    db.invoicePayment.aggregate({ where: { date }, _sum: { amount: true } }),
+  const [cp, adv, advRefunds, pos, oi, sp, ge] = await Promise.all([
+    db.invoicePayment.aggregate({ where: { date, ...CASH_PAYMENTS }, _sum: { amount: true } }),
+    db.customerAdvance.aggregate({ where: { date, ...LIVE_ADVANCES }, _sum: { amount: true } }),
+    db.customerAdvanceRefund.aggregate({ where: { date, advance: LIVE_ADVANCES }, _sum: { amount: true } }),
+    db.posPayment.aggregate({ where: { date, sale: { status: { not: "VOIDED" } } }, _sum: { amount: true } }),
     db.otherIncome.aggregate({ where: { date }, _sum: { amount: true } }),
     db.purchasePayment.aggregate({ where: { date }, _sum: { amount: true } }),
     db.expense.aggregate({ where: { date }, _sum: { amount: true } }),
   ]);
-  const customerPayments = num(cp._sum.amount);
+  /**
+   * Advances taken, less any unused money handed back in this same period. Both are customer money
+   * arriving and leaving, so they belong with customer payments rather than in a column of their own.
+   */
+  const customerPayments = round2(num(cp._sum.amount) + num(adv._sum.amount) - num(advRefunds._sum.amount));
+  const posSales = num(pos._sum.amount);
   const otherIncome = num(oi._sum.amount);
   const supplierPayments = num(sp._sum.amount);
   const generalExpenses = num(ge._sum.amount);
-  const totalIncome = round2(customerPayments + otherIncome);
+  const totalIncome = round2(customerPayments + posSales + otherIncome);
   const totalExpenses = round2(supplierPayments + generalExpenses);
-  return { customerPayments, otherIncome, totalIncome, supplierPayments, generalExpenses, totalExpenses, profit: round2(totalIncome - totalExpenses) };
+  return { customerPayments, posSales, otherIncome, totalIncome, supplierPayments, generalExpenses, totalExpenses, profit: round2(totalIncome - totalExpenses) };
 }
 
 export type IncomeEntry = {
   id: string;
-  kind: "CUSTOMER_PAYMENT" | "OTHER_INCOME";
+  kind: "CUSTOMER_PAYMENT" | "CUSTOMER_ADVANCE" | "ADVANCE_REFUND" | "POS_SALE" | "OTHER_INCOME";
   number: string;
   date: Date;
   description: string;
@@ -58,9 +83,13 @@ export type IncomeEntry = {
   accountId: string;
   accountName: string;
   category: string | null;
-  // Where "View" goes: the invoice for payments, the entry itself for other income.
+  // Where "View" goes: the invoice for payments, the sale for POS takings, the entry itself for
+  // other income.
   invoiceId?: string;
-  customerName?: string;
+  posSaleId?: string;
+  advanceId?: string;
+  customerId?: string;
+  customerName?: string | null;
 };
 
 export type ExpenseEntry = {
@@ -78,20 +107,42 @@ export type ExpenseEntry = {
   supplierName?: string;
 };
 
-export type IncomeFilters = { type?: "customer-payment" | "other-income"; accountId?: string };
+export type IncomeFilters = { type?: "customer-payment" | "pos-sale" | "other-income"; accountId?: string };
 export type ExpenseFilters = { type?: "supplier-payment" | "general-expense"; accountId?: string; categoryId?: string };
 
 export async function listIncomeEntries(range: DateRange, filters: IncomeFilters): Promise<IncomeEntry[]> {
   const date = dateWhere(range);
   const account = filters.accountId ? { paymentAccountId: filters.accountId } : {};
-  const [payments, incomes] = await Promise.all([
-    filters.type === "other-income"
+  const [payments, advances, advanceRefunds, posPayments, incomes] = await Promise.all([
+    filters.type && filters.type !== "customer-payment"
       ? []
       : db.invoicePayment.findMany({
-          where: { date, ...account },
+          where: { date, ...account, ...CASH_PAYMENTS },
           include: { invoice: { select: { id: true, number: true, customer: { select: { name: true } } } }, paymentAccount: { select: { name: true } } },
         }),
-    filters.type === "customer-payment"
+    /** An advance is customer money arriving, so it sits under the same filter as a payment. */
+    filters.type && filters.type !== "customer-payment"
+      ? []
+      : db.customerAdvance.findMany({
+          where: { date, ...account, ...LIVE_ADVANCES },
+          include: { customer: { select: { id: true, name: true } }, paymentAccount: { select: { name: true } } },
+        }),
+    filters.type && filters.type !== "customer-payment"
+      ? []
+      : db.customerAdvanceRefund.findMany({
+          where: { date, ...account, advance: LIVE_ADVANCES },
+          include: { advance: { select: { number: true, customer: { select: { id: true, name: true } } } }, paymentAccount: { select: { name: true } } },
+        }),
+    filters.type && filters.type !== "pos-sale"
+      ? []
+      : db.posPayment.findMany({
+          where: { date, ...account, sale: { status: { not: "VOIDED" } } },
+          include: {
+            sale: { select: { id: true, number: true, customer: { select: { name: true } }, branch: { select: { name: true } } } },
+            paymentAccount: { select: { name: true } },
+          },
+        }),
+    filters.type && filters.type !== "other-income"
       ? []
       : db.otherIncome.findMany({ where: { date, ...account }, include: { category: { select: { name: true } }, paymentAccount: { select: { name: true } } } }),
   ]);
@@ -108,6 +159,48 @@ export async function listIncomeEntries(range: DateRange, filters: IncomeFilters
       category: null,
       invoiceId: p.invoice.id,
       customerName: p.invoice.customer.name,
+    })),
+    ...advances.map((a) => ({
+      id: a.id,
+      kind: "CUSTOMER_ADVANCE" as const,
+      number: a.number,
+      date: a.date,
+      description: `Advance from ${a.customer.name}${a.reference ? ` (${a.reference})` : ""}`,
+      amount: num(a.amount),
+      accountId: a.paymentAccountId,
+      accountName: a.paymentAccount.name,
+      category: null,
+      customerName: a.customer.name,
+      customerId: a.customer.id,
+      advanceId: a.id,
+    })),
+    /** Shown as a negative, because that is what it did to the month's income. */
+    ...advanceRefunds.map((r) => ({
+      id: r.id,
+      kind: "ADVANCE_REFUND" as const,
+      number: r.advance.number,
+      date: r.date,
+      description: `Advance returned to ${r.advance.customer.name}${r.reference ? ` (${r.reference})` : ""}`,
+      amount: -num(r.amount),
+      accountId: r.paymentAccountId,
+      accountName: r.paymentAccount.name,
+      category: null,
+      customerName: r.advance.customer.name,
+      customerId: r.advance.customer.id,
+      advanceId: r.advanceId,
+    })),
+    ...posPayments.map((p) => ({
+      id: p.id,
+      kind: "POS_SALE" as const,
+      number: p.sale.number,
+      date: p.date,
+      description: `POS sale ${p.sale.number} — ${p.sale.customer?.name ?? "Walk-in"} (${p.sale.branch.name})`,
+      amount: num(p.amount),
+      accountId: p.paymentAccountId,
+      accountName: p.paymentAccount.name,
+      category: null,
+      posSaleId: p.sale.id,
+      customerName: p.sale.customer?.name ?? null,
     })),
     ...incomes.map((i) => ({
       id: i.id,
@@ -175,9 +268,14 @@ export type AccountBalance = { id: string; name: string; type: string; isActive:
 
 /** Current balance per payment account: opening + money in − money out. */
 export async function getAccountBalances(): Promise<AccountBalance[]> {
-  const [accounts, cp, oi, sp, ge] = await Promise.all([
+  const [accounts, cp, adv, advRefunds, pos, oi, sp, ge] = await Promise.all([
     db.paymentAccount.findMany({ orderBy: [{ isActive: "desc" }, { createdAt: "asc" }] }),
-    db.invoicePayment.groupBy({ by: ["paymentAccountId"], _sum: { amount: true } }),
+    // Advance-funded payments are left out for the same reason as in the totals: that cash is
+    // already in the account, counted on the advance.
+    db.invoicePayment.groupBy({ by: ["paymentAccountId"], where: CASH_PAYMENTS, _sum: { amount: true } }),
+    db.customerAdvance.groupBy({ by: ["paymentAccountId"], where: LIVE_ADVANCES, _sum: { amount: true } }),
+    db.customerAdvanceRefund.groupBy({ by: ["paymentAccountId"], where: { advance: LIVE_ADVANCES }, _sum: { amount: true } }),
+    db.posPayment.groupBy({ by: ["paymentAccountId"], where: { sale: { status: { not: "VOIDED" } } }, _sum: { amount: true } }),
     db.otherIncome.groupBy({ by: ["paymentAccountId"], _sum: { amount: true } }),
     db.purchasePayment.groupBy({ by: ["paymentAccountId"], _sum: { amount: true } }),
     db.expense.groupBy({ by: ["paymentAccountId"], _sum: { amount: true } }),
@@ -186,7 +284,9 @@ export async function getAccountBalances(): Promise<AccountBalance[]> {
     num((rows.find((r) => r.paymentAccountId === id)?._sum.amount ?? 0) as number);
   return accounts.map((a) => {
     const opening = num(a.openingBalance);
-    const balance = round2(opening + sum(cp, a.id) + sum(oi, a.id) - sum(sp, a.id) - sum(ge, a.id));
+    const balance = round2(
+      opening + sum(cp, a.id) + sum(adv, a.id) - sum(advRefunds, a.id) + sum(pos, a.id) + sum(oi, a.id) - sum(sp, a.id) - sum(ge, a.id),
+    );
     return { id: a.id, name: a.name, type: a.type, isActive: a.isActive, openingBalance: opening, balance };
   });
 }
@@ -214,10 +314,18 @@ export async function listReceivables(range: DateRange, filters: OutstandingFilt
       status: true,
       grandTotal: true,
       paidTotal: true,
+      creditedTotal: true,
       customer: { select: { id: true, name: true, email: true, contactPerson: true } },
     },
   });
-  return rows.map((r) => ({ ...r, grandTotal: num(r.grandTotal), paidTotal: num(r.paidTotal), remaining: round2(num(r.grandTotal) - num(r.paidTotal)) }));
+  // What is owed is the total less what was paid and less what was credited away.
+  return rows.map((r) => ({
+    ...r,
+    grandTotal: num(r.grandTotal),
+    paidTotal: num(r.paidTotal),
+    creditedTotal: num(r.creditedTotal),
+    remaining: round2(num(r.grandTotal) - num(r.paidTotal) - num(r.creditedTotal)),
+  }));
 }
 
 export type ReceivableRow = Awaited<ReturnType<typeof listReceivables>>[number];

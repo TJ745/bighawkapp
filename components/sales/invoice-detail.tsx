@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, Eye, Pencil, Send, Wallet } from "lucide-react";
+import { ArrowLeft, Download, Eye, FileMinus2, Pencil, Send, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +16,8 @@ import { INVOICE_STATUS } from "@/lib/business/sales-status";
 import type { InvoiceDetail } from "@/lib/data/sales";
 import { DocumentView } from "@/components/documents/document-view";
 import { RecordPaymentDialog, type PaymentAccountOption } from "@/components/documents/record-payment-dialog";
+import { CreditNoteDialog, type CreditableLineView } from "./credit-note-dialog";
+import type { InvoiceCreditNote } from "@/lib/data/credit-notes";
 import { SendDialog } from "@/components/documents/send-dialog";
 
 type Props = {
@@ -25,14 +27,19 @@ type Props = {
   showVat: boolean;
   accounts: PaymentAccountOption[];
   today: string;
+  /** What is still open to credit, and the notes already issued against this invoice. */
+  creditable: CreditableLineView[];
+  creditNotes: InvoiceCreditNote[];
+  canCredit: boolean;
 };
 
-export function InvoiceDetailView({ invoice: inv, canEdit, emailConfigured, showVat, accounts, today }: Props) {
+export function InvoiceDetailView({ invoice: inv, canEdit, emailConfigured, showVat, accounts, today, creditable, creditNotes, canCredit }: Props) {
   const router = useRouter();
   const format = useFormat();
   const [sendOpen, setSendOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [markOpen, setMarkOpen] = useState(false);
+  const [creditOpen, setCreditOpen] = useState(false);
   const status = INVOICE_STATUS[inv.status];
   const pdfUrl = `/api/sales/invoices/${inv.id}/pdf`;
 
@@ -53,12 +60,9 @@ export function InvoiceDetailView({ invoice: inv, canEdit, emailConfigured, show
           { label: "Remaining after deposit", value: inv.grandTotal - inv.depositAmount },
         ]
       : []),
-    ...(inv.paidTotal > 0
-      ? [
-          { label: "Paid", value: inv.paidTotal, negative: true },
-          { label: "Balance due", value: inv.remaining, emphasis: true },
-        ]
-      : []),
+    ...(inv.paidTotal > 0 ? [{ label: "Paid", value: inv.paidTotal, negative: true }] : []),
+    ...(inv.creditedTotal > 0 ? [{ label: "Credited", value: inv.creditedTotal, negative: true }] : []),
+    ...(inv.paidTotal > 0 || inv.creditedTotal > 0 ? [{ label: "Balance due", value: inv.remaining, emphasis: true }] : []),
   ];
 
   return (
@@ -115,6 +119,12 @@ export function InvoiceDetailView({ invoice: inv, canEdit, emailConfigured, show
           {canEdit && inv.status === "DRAFT" ? (
             <Button variant="ghost" onClick={() => setMarkOpen(true)}>
               Mark as sent
+            </Button>
+          ) : null}
+          {canCredit && inv.status !== "DRAFT" && creditable.some((line) => line.creditableQuantity > 0) ? (
+            <Button variant="outline" onClick={() => setCreditOpen(true)}>
+              <FileMinus2 />
+              Credit note
             </Button>
           ) : null}
           {canEdit && inv.remaining > 0 ? (
@@ -192,6 +202,47 @@ export function InvoiceDetailView({ invoice: inv, canEdit, emailConfigured, show
         </CardContent>
       </Card>
 
+      {creditNotes.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Credit notes</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">Note</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="hidden sm:table-cell">Reason</TableHead>
+                  <TableHead className="hidden md:table-cell">Refunded</TableHead>
+                  <TableHead className="pr-6 text-right">Credited</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {creditNotes.map((note) => (
+                  <TableRow key={note.id}>
+                    <TableCell className="pl-6 font-medium">
+                      <Link href={`/sales/credit-notes/${note.id}`} className="hover:underline">
+                        {note.number}
+                      </Link>
+                      {note.status === "CANCELLED" ? <span className="ml-2 text-xs text-muted-foreground">cancelled</span> : null}
+                    </TableCell>
+                    <TableCell>{format.date(note.date)}</TableCell>
+                    <TableCell className="hidden text-muted-foreground sm:table-cell">{note.reason}</TableCell>
+                    <TableCell className="hidden text-muted-foreground md:table-cell">
+                      {note.refundedTotal > 0 ? format.money(note.refundedTotal) : "—"}
+                    </TableCell>
+                    <TableCell className="pr-6 text-right font-medium tabular-nums">
+                      {note.status === "CANCELLED" ? "—" : format.money(note.grandTotal)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <SendDialog
         open={sendOpen}
         onOpenChange={setSendOpen}
@@ -210,6 +261,17 @@ export function InvoiceDetailView({ invoice: inv, canEdit, emailConfigured, show
         accounts={accounts}
         direction="received"
         record={(values) => recordInvoicePayment(inv.id, values)}
+      />
+      <CreditNoteDialog
+        open={creditOpen}
+        onOpenChange={setCreditOpen}
+        invoiceId={inv.id}
+        invoiceNumber={inv.number}
+        paidTotal={inv.paidTotal}
+        lines={creditable}
+        accounts={accounts}
+        today={today}
+        showVat={showVat}
       />
       <ConfirmDialog
         open={markOpen}

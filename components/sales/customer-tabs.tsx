@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { listCustomerAdvances, listSettleableInvoices } from "@/lib/data/advances";
 import { listCustomerPayments, listInvoices, listQuotations, today } from "@/lib/data/sales";
 import { listPaymentAccounts } from "@/lib/data/settings";
+import type { AuthContext } from "@/lib/auth/session";
+import { CustomerAdvances } from "@/components/parties/customer-advances";
 import { CustomerPaymentsTable } from "./customer-payments-table";
 import { InvoicesTable } from "./invoices-table";
 import { QuotationsTable } from "./quotations-table";
@@ -66,4 +69,31 @@ export async function CustomerInvoicesTab({ customerId, canCreate, canEdit }: { 
 export async function CustomerPaymentsTab({ customerId }: { customerId: string }) {
   const payments = await listCustomerPayments(customerId);
   return <CustomerPaymentsTable payments={payments} />;
+}
+
+/**
+ * Money the customer has paid in advance, and what it has gone towards.
+ *
+ * The invoices offered are the ones with money still owing, so an advance can only be put against
+ * something that is actually outstanding — the engine refuses anything else regardless.
+ */
+export async function CustomerAdvancesTab({ customerId, customerName, auth }: { customerId: string; customerName: string; auth: AuthContext }) {
+  const [advances, invoices, accounts, todayDate] = await Promise.all([
+    listCustomerAdvances(customerId),
+    listSettleableInvoices(customerId),
+    listPaymentAccounts({ activeOnly: true }),
+    today(),
+  ]);
+  return (
+    <CustomerAdvances
+      customerId={customerId}
+      customerName={customerName}
+      advances={advances}
+      invoices={invoices}
+      accounts={accounts.map((account) => ({ id: account.id, name: account.name }))}
+      today={todayDate}
+      canEdit={auth.can("SALES", "edit")}
+      canDelete={auth.can("SALES", "delete")}
+    />
+  );
 }

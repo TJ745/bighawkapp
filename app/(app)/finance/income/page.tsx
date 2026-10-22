@@ -16,7 +16,7 @@ export default async function IncomePage({ searchParams }: PageProps<"/finance/i
   const todayDate = await today();
   await refreshSalesStatuses();
   const range = resolveRange(raw, todayDate, "this-month");
-  const type = raw.type === "customer-payment" || raw.type === "other-income" ? raw.type : undefined;
+  const type = raw.type === "customer-payment" || raw.type === "pos-sale" || raw.type === "other-income" ? raw.type : undefined;
   const accountId = typeof raw.account === "string" ? raw.account : undefined;
   const entryId = typeof raw.entry === "string" ? raw.entry : undefined;
 

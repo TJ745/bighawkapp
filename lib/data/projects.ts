@@ -38,7 +38,7 @@ export async function listProjects(params: ListParams, customerId?: string) {
     db.project.findMany({
       where,
       orderBy: [{ startDate: "desc" }, { code: "desc" }],
-      ...paginate(params.page),
+      ...paginate(params),
       select: {
         id: true,
         code: true,

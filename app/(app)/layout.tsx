@@ -9,18 +9,25 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { requireAuth } from "@/lib/auth/session";
 import { countUnreadNotifications } from "@/lib/data/notifications";
+import { getCurrentBranch, listActiveBranches } from "@/lib/data/platform";
 import { getRegionalSettings } from "@/lib/data/settings";
 import { runNotificationSweep } from "@/lib/notifications/sweep";
 import { getBranding } from "@/lib/settings/branding";
+import { posTypeInfo } from "@/lib/platform/pos-types";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const auth = await requireAuth();
-  const [branding, regional, unreadCount, cookieStore] = await Promise.all([
+  const posEnabled = auth.hasModule("POS");
+  const [branding, regional, unreadCount, cookieStore, currentBranch, branches] = await Promise.all([
     getBranding(),
     getRegionalSettings(),
     countUnreadNotifications(auth.user.id),
     cookies(),
+    getCurrentBranch(),
+    posEnabled ? listActiveBranches() : Promise.resolve([]),
   ]);
+  // Industry capabilities of the branch in use decide which POS pages appear at all.
+  const capabilities = posEnabled && currentBranch?.posConfig ? posTypeInfo(currentBranch.posConfig.businessType).capabilities : [];
   // Persist the collapsed/expanded state across reloads (cookie is set by the sidebar itself).
   const sidebarOpen = cookieStore.get("sidebar_state")?.value !== "false";
   // Time-based notifications (overdue, due soon) run after the response, at most every 15 minutes.
@@ -29,7 +36,14 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   return (
     <FormatProvider regional={regional}>
       <SidebarProvider defaultOpen={sidebarOpen}>
-        <AppSidebar branding={branding} visibleModules={auth.visibleModules} />
+        <AppSidebar
+          branding={branding}
+          branches={branches.map((b) => ({ id: b.id, name: b.name, code: b.code }))}
+          currentBranchId={currentBranch?.id ?? null}
+          visibleModules={auth.visibleModules}
+          enabledModules={auth.enabledModules}
+          capabilities={[...capabilities]}
+        />
         <SidebarInset>
           <AppHeader>
             <NotificationBell unreadCount={unreadCount} />

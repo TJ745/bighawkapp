@@ -16,6 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { FormField } from "@/components/shared/form-field";
 import { createRole, updateRole } from "@/actions/roles";
 import { PERMISSION_ACTIONS, PERMISSION_MODULES, type PermissionAction } from "@/lib/auth/permissions";
+import type { PermissionModule } from "@/lib/generated/prisma/enums";
 import type { RoleDetail } from "@/lib/data/users";
 import { applyFieldErrors } from "@/lib/form-errors";
 import { roleSchema, type RoleFormValues, type RoleInput } from "@/lib/validation/users";
@@ -30,6 +31,8 @@ const ACTION_LABELS: Record<PermissionAction, string> = {
 type RoleFormProps = {
   role?: RoleDetail;
   readOnly?: boolean;
+  /** Permission modules to show — modules the company does not subscribe to are left out. */
+  shownModules?: PermissionModule[];
 };
 
 function defaultsFor(role?: RoleDetail): RoleFormValues {
@@ -49,7 +52,10 @@ function defaultsFor(role?: RoleDetail): RoleFormValues {
   };
 }
 
-export function RoleForm({ role, readOnly }: RoleFormProps) {
+export function RoleForm({ role, readOnly, shownModules }: RoleFormProps) {
+  // Every module stays in form state even when hidden, so saving a role never silently drops
+  // grants for a module that happens to be switched off today.
+  const shown = shownModules ?? PERMISSION_MODULES.map((m) => m.value);
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const form = useForm<RoleFormValues, unknown, RoleInput>({ resolver: zodResolver(roleSchema), defaultValues: defaultsFor(role) });
@@ -134,7 +140,9 @@ export function RoleForm({ role, readOnly }: RoleFormProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {PERMISSION_MODULES.map((m, index) => {
+                {PERMISSION_MODULES.map((m, index) => ({ m, index }))
+                  .filter(({ m }) => shown.includes(m.value))
+                  .map(({ m, index }) => {
                   const row = permissions[index];
                   const all = PERMISSION_ACTIONS.every((a) => row[a]);
                   return (

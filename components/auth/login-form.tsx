@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,7 +13,7 @@ import { FormField } from "@/components/shared/form-field";
 import { signInWithPassword } from "@/actions/auth";
 import { loginSchema, type LoginInput } from "@/lib/validation/auth";
 
-export function LoginForm({ nextPath }: { nextPath: string }) {
+export function LoginForm({ nextPath, canReset = false }: { nextPath: string; canReset?: boolean }) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const form = useForm<LoginInput>({
@@ -45,6 +46,14 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
       <FormField label="Password" htmlFor="password" required error={errors.password?.message}>
         <Input id="password" type="password" autoComplete="current-password" className="h-11" {...form.register("password")} />
       </FormField>
+      {/* Offered only when email is set up, since the link has to reach an inbox to be any use. */}
+      {canReset ? (
+        <div className="flex justify-end">
+          <Link href="/forgot-password" className="text-[13px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+            Forgot your password?
+          </Link>
+        </div>
+      ) : null}
       <Button type="submit" size="lg" className="mt-2 h-12 w-full text-[15px]" disabled={isSubmitting}>
         {isSubmitting ? <Loader2 className="animate-spin" /> : null}
         Sign in

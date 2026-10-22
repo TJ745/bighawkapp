@@ -39,7 +39,7 @@ export type PartyListItem = {
 export async function listCustomers(params: ListParams): Promise<{ items: PartyListItem[]; total: number }> {
   const where = listWhere(params);
   const [rows, total] = await Promise.all([
-    db.customer.findMany({ where, select: listSelect, orderBy: { name: "asc" }, ...paginate(params.page) }),
+    db.customer.findMany({ where, select: listSelect, orderBy: { name: "asc" }, ...paginate(params) }),
     db.customer.count({ where }),
   ]);
   const financials = await getCustomerFinancials(rows.map((r) => r.id));
@@ -49,7 +49,7 @@ export async function listCustomers(params: ListParams): Promise<{ items: PartyL
 export async function listSuppliers(params: ListParams): Promise<{ items: PartyListItem[]; total: number }> {
   const where = listWhere(params);
   const [rows, total] = await Promise.all([
-    db.supplier.findMany({ where, select: listSelect, orderBy: { name: "asc" }, ...paginate(params.page) }),
+    db.supplier.findMany({ where, select: listSelect, orderBy: { name: "asc" }, ...paginate(params) }),
     db.supplier.count({ where }),
   ]);
   const financials = await getSupplierFinancials(rows.map((r) => r.id));
@@ -82,7 +82,12 @@ export async function getSupplier(id: string) {
   return { ...row, documents: withUrls(row.documents), financials };
 }
 
-export type PartyDetail = NonNullable<Awaited<ReturnType<typeof getCustomer>>>;
+/**
+ * The shape the shared party screens read. Customers and suppliers are the same record to those
+ * screens, so anything only one of them has — a customer's price list — is optional here.
+ */
+type CustomerDetail = NonNullable<Awaited<ReturnType<typeof getCustomer>>>;
+export type PartyDetail = Omit<CustomerDetail, "priceListId"> & { priceListId?: string | null };
 export type PartyDocument = PartyDetail["documents"][number];
 
 /** Lightweight options for pickers (quotations, invoices, projects…). */
