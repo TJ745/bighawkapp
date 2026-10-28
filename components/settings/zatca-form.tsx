@@ -7,7 +7,7 @@ import { CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SettingSwitchRow } from "@/components/settings/setting-switch-row";
 import { updateZatcaSettings } from "@/actions/settings";
 import { actionErrorLines } from "@/lib/action-error";
@@ -117,28 +117,9 @@ export function ZatcaForm({ mode, problems, canEdit }: { mode: ZatcaMode; proble
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>What is not built yet</CardTitle>
-          <CardDescription>So nobody assumes more than the app does.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm text-muted-foreground">
-          <p>
-            <span className="font-medium text-foreground">Phase 2 — &ldquo;Integration&rdquo;</span> is not implemented. That phase sends each
-            invoice to ZATCA as signed UBL&nbsp;2.1 XML: business-to-business invoices are cleared before the buyer receives them, and till
-            receipts are reported within 24 hours. It needs a certificate obtained from the Fatoora portal, an invoice hash chain, and a
-            submission queue.
-          </p>
-          <p>
-            Phase 1 turns this app into one that <span className="font-medium text-foreground">produces compliant tax invoices</span>. Whether a
-            particular installation is compliant is settled by ZATCA&apos;s own checks against your certificate and your wave date — not by this
-            screen.
-          </p>
-        </CardContent>
-        <CardFooter className="text-xs text-muted-foreground">
-          Check your company&apos;s wave and obligations with ZATCA or your accountant.
-        </CardFooter>
-      </Card>
+      <p className="text-xs text-muted-foreground">
+        Check your company&apos;s wave and obligations with ZATCA or your accountant.
+      </p>
     </div>
   );
 }

@@ -45,18 +45,29 @@ export type FinanceTotals = {
  */
 const CASH_PAYMENTS = { customerAdvanceId: null } as const;
 
+/**
+ * The same rule read backwards, for money going out.
+ *
+ * A purchase payment funded by a supplier prepayment is **not** cash leaving: it left when the
+ * prepayment was made and is counted there. Without this filter the same riyal is an expense
+ * twice and every bank balance is understated by the value of every deposit ever paid.
+ */
+const CASH_SUPPLIER_PAYMENTS = { supplierAdvanceId: null } as const;
+
 /** Advances that still stand. A cancelled one was keyed in error and never counted. */
 const LIVE_ADVANCES = { status: { not: "CANCELLED" } } as const;
 
 export async function getFinanceTotals(range: DateRange): Promise<FinanceTotals> {
   const date = dateWhere(range);
-  const [cp, adv, advRefunds, pos, oi, sp, ge] = await Promise.all([
+  const [cp, adv, advRefunds, pos, oi, sp, prepaid, prepaidBack, ge] = await Promise.all([
     db.invoicePayment.aggregate({ where: { date, ...CASH_PAYMENTS }, _sum: { amount: true } }),
     db.customerAdvance.aggregate({ where: { date, ...LIVE_ADVANCES }, _sum: { amount: true } }),
     db.customerAdvanceRefund.aggregate({ where: { date, advance: LIVE_ADVANCES }, _sum: { amount: true } }),
     db.posPayment.aggregate({ where: { date, sale: { status: { not: "VOIDED" } } }, _sum: { amount: true } }),
     db.otherIncome.aggregate({ where: { date }, _sum: { amount: true } }),
-    db.purchasePayment.aggregate({ where: { date }, _sum: { amount: true } }),
+    db.purchasePayment.aggregate({ where: { date, ...CASH_SUPPLIER_PAYMENTS }, _sum: { amount: true } }),
+    db.supplierAdvance.aggregate({ where: { date, ...LIVE_ADVANCES }, _sum: { amount: true } }),
+    db.supplierAdvanceRefund.aggregate({ where: { date, advance: LIVE_ADVANCES }, _sum: { amount: true } }),
     db.expense.aggregate({ where: { date }, _sum: { amount: true } }),
   ]);
   /**
@@ -66,7 +77,12 @@ export async function getFinanceTotals(range: DateRange): Promise<FinanceTotals>
   const customerPayments = round2(num(cp._sum.amount) + num(adv._sum.amount) - num(advRefunds._sum.amount));
   const posSales = num(pos._sum.amount);
   const otherIncome = num(oi._sum.amount);
-  const supplierPayments = num(sp._sum.amount);
+  /**
+   * Prepayments made, less any unused money the supplier sent back in this same period. Both are
+   * money going to and coming from suppliers, so they belong with supplier payments rather than
+   * in a column of their own — exactly as advances sit with customer payments above.
+   */
+  const supplierPayments = round2(num(sp._sum.amount) + num(prepaid._sum.amount) - num(prepaidBack._sum.amount));
   const generalExpenses = num(ge._sum.amount);
   const totalIncome = round2(customerPayments + posSales + otherIncome);
   const totalExpenses = round2(supplierPayments + generalExpenses);
@@ -94,7 +110,7 @@ export type IncomeEntry = {
 
 export type ExpenseEntry = {
   id: string;
-  kind: "SUPPLIER_PAYMENT" | "GENERAL_EXPENSE";
+  kind: "SUPPLIER_PAYMENT" | "SUPPLIER_ADVANCE" | "ADVANCE_RETURNED" | "GENERAL_EXPENSE";
   number: string;
   date: Date;
   description: string;
@@ -105,6 +121,8 @@ export type ExpenseEntry = {
   categoryId?: string;
   purchaseId?: string;
   supplierName?: string;
+  supplierId?: string;
+  advanceId?: string;
 };
 
 export type IncomeFilters = { type?: "customer-payment" | "pos-sale" | "other-income"; accountId?: string };
@@ -220,12 +238,25 @@ export async function listIncomeEntries(range: DateRange, filters: IncomeFilters
 export async function listExpenseEntries(range: DateRange, filters: ExpenseFilters): Promise<ExpenseEntry[]> {
   const date = dateWhere(range);
   const account = filters.accountId ? { paymentAccountId: filters.accountId } : {};
-  const [payments, expenses] = await Promise.all([
+  const [payments, prepayments, prepaymentsBack, expenses] = await Promise.all([
     filters.type === "general-expense" || filters.categoryId
       ? []
       : db.purchasePayment.findMany({
-          where: { date, ...account },
+          where: { date, ...account, ...CASH_SUPPLIER_PAYMENTS },
           include: { purchase: { select: { id: true, number: true, supplier: { select: { name: true } } } }, paymentAccount: { select: { name: true } } },
+        }),
+    /** A prepayment is supplier money leaving, so it sits under the same filter as a payment. */
+    filters.type === "general-expense" || filters.categoryId
+      ? []
+      : db.supplierAdvance.findMany({
+          where: { date, ...account, ...LIVE_ADVANCES },
+          include: { supplier: { select: { id: true, name: true } }, paymentAccount: { select: { name: true } } },
+        }),
+    filters.type === "general-expense" || filters.categoryId
+      ? []
+      : db.supplierAdvanceRefund.findMany({
+          where: { date, ...account, advance: LIVE_ADVANCES },
+          include: { advance: { select: { number: true, supplier: { select: { id: true, name: true } } } }, paymentAccount: { select: { name: true } } },
         }),
     filters.type === "supplier-payment"
       ? []
@@ -248,6 +279,38 @@ export async function listExpenseEntries(range: DateRange, filters: ExpenseFilte
       purchaseId: p.purchase.id,
       supplierName: p.purchase.supplier.name,
     })),
+    ...prepayments.map((a) => ({
+      id: a.id,
+      kind: "SUPPLIER_ADVANCE" as const,
+      number: a.number,
+      date: a.date,
+      description: `Prepayment to ${a.supplier.name}${a.reference ? ` (${a.reference})` : ""}`,
+      amount: num(a.amount),
+      accountId: a.paymentAccountId,
+      accountName: a.paymentAccount.name,
+      category: "Supplier Payment",
+      supplierName: a.supplier.name,
+      supplierId: a.supplier.id,
+      advanceId: a.id,
+    })),
+    /**
+     * Money coming back is shown here as a negative rather than as income: it reverses an
+     * expense already recorded, and listing it under money-in would make both columns bigger
+     * than the business actually traded.
+     */
+    ...prepaymentsBack.map((r) => ({
+      id: r.id,
+      kind: "ADVANCE_RETURNED" as const,
+      number: r.advance.number,
+      date: r.date,
+      description: `Unused prepayment returned by ${r.advance.supplier.name}${r.reference ? ` (${r.reference})` : ""}`,
+      amount: -num(r.amount),
+      accountId: r.paymentAccountId,
+      accountName: r.paymentAccount.name,
+      category: "Supplier Payment",
+      supplierName: r.advance.supplier.name,
+      supplierId: r.advance.supplier.id,
+    })),
     ...expenses.map((e) => ({
       id: e.id,
       kind: "GENERAL_EXPENSE" as const,
@@ -268,7 +331,7 @@ export type AccountBalance = { id: string; name: string; type: string; isActive:
 
 /** Current balance per payment account: opening + money in − money out. */
 export async function getAccountBalances(): Promise<AccountBalance[]> {
-  const [accounts, cp, adv, advRefunds, pos, oi, sp, ge] = await Promise.all([
+  const [accounts, cp, adv, advRefunds, pos, oi, sp, prepaid, prepaidBack, ge] = await Promise.all([
     db.paymentAccount.findMany({ orderBy: [{ isActive: "desc" }, { createdAt: "asc" }] }),
     // Advance-funded payments are left out for the same reason as in the totals: that cash is
     // already in the account, counted on the advance.
@@ -277,7 +340,9 @@ export async function getAccountBalances(): Promise<AccountBalance[]> {
     db.customerAdvanceRefund.groupBy({ by: ["paymentAccountId"], where: { advance: LIVE_ADVANCES }, _sum: { amount: true } }),
     db.posPayment.groupBy({ by: ["paymentAccountId"], where: { sale: { status: { not: "VOIDED" } } }, _sum: { amount: true } }),
     db.otherIncome.groupBy({ by: ["paymentAccountId"], _sum: { amount: true } }),
-    db.purchasePayment.groupBy({ by: ["paymentAccountId"], _sum: { amount: true } }),
+    db.purchasePayment.groupBy({ by: ["paymentAccountId"], where: CASH_SUPPLIER_PAYMENTS, _sum: { amount: true } }),
+    db.supplierAdvance.groupBy({ by: ["paymentAccountId"], where: LIVE_ADVANCES, _sum: { amount: true } }),
+    db.supplierAdvanceRefund.groupBy({ by: ["paymentAccountId"], where: { advance: LIVE_ADVANCES }, _sum: { amount: true } }),
     db.expense.groupBy({ by: ["paymentAccountId"], _sum: { amount: true } }),
   ]);
   const sum = (rows: { paymentAccountId: string; _sum: { amount: unknown } }[], id: string) =>
@@ -285,7 +350,16 @@ export async function getAccountBalances(): Promise<AccountBalance[]> {
   return accounts.map((a) => {
     const opening = num(a.openingBalance);
     const balance = round2(
-      opening + sum(cp, a.id) + sum(adv, a.id) - sum(advRefunds, a.id) + sum(pos, a.id) + sum(oi, a.id) - sum(sp, a.id) - sum(ge, a.id),
+      opening +
+        sum(cp, a.id) +
+        sum(adv, a.id) -
+        sum(advRefunds, a.id) +
+        sum(pos, a.id) +
+        sum(oi, a.id) -
+        sum(sp, a.id) -
+        sum(prepaid, a.id) +
+        sum(prepaidBack, a.id) -
+        sum(ge, a.id),
     );
     return { id: a.id, name: a.name, type: a.type, isActive: a.isActive, openingBalance: opening, balance };
   });
@@ -349,10 +423,18 @@ export async function listPayables(range: DateRange, filters: OutstandingFilters
       status: true,
       grandTotal: true,
       paidTotal: true,
+      creditedTotal: true,
       supplier: { select: { id: true, name: true, email: true, contactPerson: true } },
     },
   });
-  return rows.map((r) => ({ ...r, grandTotal: num(r.grandTotal), paidTotal: num(r.paidTotal), remaining: round2(num(r.grandTotal) - num(r.paidTotal)) }));
+  // Goods that went back reduce what is owed exactly as a payment does, so payables has to
+  // subtract them too — otherwise a bill settled by a return keeps showing as money owed.
+  return rows.map((r) => ({
+    ...r,
+    grandTotal: num(r.grandTotal),
+    paidTotal: num(r.paidTotal),
+    remaining: round2(num(r.grandTotal) - num(r.paidTotal) - num(r.creditedTotal)),
+  }));
 }
 
 export type PayableRow = Awaited<ReturnType<typeof listPayables>>[number];

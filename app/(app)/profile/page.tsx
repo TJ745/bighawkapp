@@ -6,14 +6,14 @@ import { ProfileDetailsForm } from "@/components/profile/profile-details-form";
 import { PageHeader } from "@/components/shared/page-header";
 import { requireAuth } from "@/lib/auth/session";
 import { getPasswordPolicy } from "@/lib/data/settings";
-import { getUser } from "@/lib/data/users";
+import { getOwnProfile } from "@/lib/data/users";
 import { getFormatters } from "@/lib/settings/formatters";
 
 export const metadata: Metadata = { title: "My Profile" };
 
 export default async function ProfilePage() {
   const auth = await requireAuth();
-  const [user, passwordPolicy, format] = await Promise.all([getUser(auth.user.id), getPasswordPolicy(), getFormatters()]);
+  const [user, passwordPolicy, format] = await Promise.all([getOwnProfile(auth.user.id), getPasswordPolicy(), getFormatters()]);
   if (!user) notFound();
 
   return (

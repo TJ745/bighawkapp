@@ -34,6 +34,13 @@ export type PdfDocumentData = {
   partyLabel: string; // "Bill to" / "Supplier"
   partyLines: string[];
   items: { description: string; quantity: string; unitPrice: string; discount: string; vat: string; total: string }[];
+  /**
+   * Renames the item columns, for a document whose table is not a list of goods — a statement's
+   * rows are dates and running balances. The widths and the layout stay exactly as they are; only
+   * the headings change, and an overridden heading carries no Arabic twin because it is not one
+   * of ZATCA's terms.
+   */
+  columns?: Partial<Record<"description" | "quantity" | "unitPrice" | "discount" | "vat" | "total", string>>;
   totals: { label: string; labelAr?: string; value: string; emphasis?: boolean }[];
   sections: { title: string; lines: string[] }[]; // Payment terms, bank details, terms & conditions…
   statusNote?: string; // e.g. "PAID" stamp text
@@ -156,6 +163,19 @@ function Header({ b, d, s }: { b: PdfBranding; d: PdfDocumentData; s: ReturnType
 }
 
 /** A column heading, with its Arabic twin underneath on a tax invoice. */
+type ColumnKey = NonNullable<PdfDocumentData["columns"]> extends Partial<Record<infer K, string>> ? K : never;
+
+/** An overridden column heading, or ZATCA's own term when the document has not renamed it. */
+function heading(d: PdfDocumentData, key: ColumnKey, fallback: { en: string; ar: string }) {
+  const override = d.columns?.[key];
+  return override ? { en: override, ar: "" } : fallback;
+}
+
+/** A renamed column is not one of ZATCA's terms, so it never gets an Arabic twin. */
+function bilingual(d: PdfDocumentData, key: ColumnKey, b: PdfBranding) {
+  return Boolean(b.arabic) && !d.columns?.[key];
+}
+
 function Th({
   style,
   label,
@@ -208,12 +228,12 @@ function DocumentPdf({ branding: b, data: d }: { branding: PdfBranding; data: Pd
           {/* On a tax invoice each heading carries its Arabic twin on a second line, which keeps
               the column widths — and so the whole layout — exactly as they were. */}
           <View style={s.th} fixed>
-            <Th style={s.cDesc} label={ZatcaLabel.description} bilingual={Boolean(b.arabic)} s={s} />
-            <Th style={s.cQty} label={ZatcaLabel.quantity} bilingual={Boolean(b.arabic)} s={s} />
-            <Th style={s.cPrice} label={ZatcaLabel.unitPrice} bilingual={Boolean(b.arabic)} s={s} />
-            <Th style={s.cDisc} label={ZatcaLabel.discount} bilingual={Boolean(b.arabic)} s={s} />
-            <Th style={s.cVat} label={ZatcaLabel.vat} bilingual={Boolean(b.arabic)} s={s} />
-            <Th style={s.cTotal} label={ZatcaLabel.lineTotal} bilingual={Boolean(b.arabic)} s={s} />
+            <Th style={s.cDesc} label={heading(d, "description", ZatcaLabel.description)} bilingual={bilingual(d, "description", b)} s={s} />
+            <Th style={s.cQty} label={heading(d, "quantity", ZatcaLabel.quantity)} bilingual={bilingual(d, "quantity", b)} s={s} />
+            <Th style={s.cPrice} label={heading(d, "unitPrice", ZatcaLabel.unitPrice)} bilingual={bilingual(d, "unitPrice", b)} s={s} />
+            <Th style={s.cDisc} label={heading(d, "discount", ZatcaLabel.discount)} bilingual={bilingual(d, "discount", b)} s={s} />
+            <Th style={s.cVat} label={heading(d, "vat", ZatcaLabel.vat)} bilingual={bilingual(d, "vat", b)} s={s} />
+            <Th style={s.cTotal} label={heading(d, "total", ZatcaLabel.lineTotal)} bilingual={bilingual(d, "total", b)} s={s} />
           </View>
           {d.items.map((item, i) => (
             <View key={i} style={s.tr} wrap={false}>

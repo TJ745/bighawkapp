@@ -147,7 +147,11 @@ export function RoleForm({ role, readOnly, shownModules }: RoleFormProps) {
                   const all = PERMISSION_ACTIONS.every((a) => row[a]);
                   return (
                     <TableRow key={m.value}>
-                      <TableCell className="pl-6 font-medium">{m.label}</TableCell>
+                      <TableCell className="pl-6">
+                        <span className="font-medium">{m.label}</span>
+                        {/* "POS_ORDERS" means nothing to a shop owner; say whose job it is. */}
+                        {m.description ? <span className="block text-xs text-muted-foreground">{m.description}</span> : null}
+                      </TableCell>
                       {PERMISSION_ACTIONS.map((action) => (
                         <TableCell key={action} className="text-center">
                           <Checkbox

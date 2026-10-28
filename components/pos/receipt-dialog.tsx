@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, Printer, ShoppingCart } from "lucide-react";
+import { CheckCircle2, CloudOff, Printer, ShoppingCart } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useFormat } from "@/components/providers/format-provider";
@@ -10,7 +11,8 @@ import type { PaymentDraft } from "./payment-dialog";
 import { PAYMENT_METHODS } from "@/lib/validation/pos";
 
 export type ReceiptData = {
-  saleId: string;
+  /** Null for a sale rung up offline: the server has not made the record yet. */
+  saleId: string | null;
   number: string;
   lines: { name: string; quantity: number; unit: string; unitPrice: number; discountPercent: number }[];
   totals: DocumentTotals;
@@ -22,6 +24,11 @@ export type ReceiptData = {
   soldAt: Date;
   /** Quick service only: the number called out at the counter. */
   orderNumber?: number | null;
+  /**
+   * Rung up with no connection. There is no document number and no sale to open yet, so the
+   * dialog says so rather than offering links that would go nowhere.
+   */
+  provisional?: boolean;
 };
 
 /**
@@ -94,21 +101,39 @@ export function ReceiptDialog({ receipt, onClose, vatEnabled }: { receipt: Recei
           </dl>
         </div>
 
+        {/**
+          * An offline sale has no record on the server yet, so there is nothing to print from and
+          * nothing to open. Saying so plainly beats two links that lead nowhere.
+          */}
+        {receipt.provisional ? (
+          <Alert>
+            <CloudOff />
+            <AlertDescription>
+              Sold with no connection. The official receipt and its number follow once this reaches the server — it is sent by itself when the
+              connection returns.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <DialogFooter>
-          <Button asChild variant="outline">
-            <a href={`/pos/sales/${receipt.saleId}/receipt`} target="_blank" rel="noreferrer">
-              <Printer />
-              Print receipt
-            </a>
-          </Button>
+          {receipt.provisional ? null : (
+            <Button asChild variant="outline">
+              <a href={`/pos/sales/${receipt.saleId}/receipt`} target="_blank" rel="noreferrer">
+                <Printer />
+                Print receipt
+              </a>
+            </Button>
+          )}
           <Button type="button" onClick={onClose}>
             <ShoppingCart />
             Next sale
           </Button>
         </DialogFooter>
-        <p className="text-center text-xs text-muted-foreground">
-          <Link href={`/pos/sales/${receipt.saleId}`}>Open this sale</Link>
-        </p>
+        {receipt.provisional ? null : (
+          <p className="text-center text-xs text-muted-foreground">
+            <Link href={`/pos/sales/${receipt.saleId}`}>Open this sale</Link>
+          </p>
+        )}
       </DialogContent>
     </Dialog>
   );

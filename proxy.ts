@@ -38,5 +38,13 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)"],
+  /**
+   * `sw.js` and the web manifest are excluded deliberately. Neither is a page, and the browser
+   * fetches both without being signed in. A signed-out request for the worker was being
+   * redirected to the sign-in screen, and a worker script that answers with a redirect simply
+   * never registers — so the till quietly lost its ability to reopen offline, with nothing
+   * anywhere to say why. A redirected manifest is ignored just as silently, and the till can
+   * then never be installed to a home screen.
+   */
+  matcher: ["/((?!api|sw\\.js|manifest\\.webmanifest|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|ico|webp)$).*)"],
 };

@@ -5,7 +5,7 @@ import { listCustomerAdvances, listSettleableInvoices } from "@/lib/data/advance
 import { listCustomerPayments, listInvoices, listQuotations, today } from "@/lib/data/sales";
 import { listPaymentAccounts } from "@/lib/data/settings";
 import type { AuthContext } from "@/lib/auth/session";
-import { CustomerAdvances } from "@/components/parties/customer-advances";
+import { PartyAdvances } from "@/components/parties/party-advances";
 import { CustomerPaymentsTable } from "./customer-payments-table";
 import { InvoicesTable } from "./invoices-table";
 import { QuotationsTable } from "./quotations-table";
@@ -85,11 +85,12 @@ export async function CustomerAdvancesTab({ customerId, customerName, auth }: { 
     today(),
   ]);
   return (
-    <CustomerAdvances
-      customerId={customerId}
-      customerName={customerName}
+    <PartyAdvances
+      kind="customer"
+      partyId={customerId}
+      partyName={customerName}
       advances={advances}
-      invoices={invoices}
+      documents={invoices}
       accounts={accounts.map((account) => ({ id: account.id, name: account.name }))}
       today={todayDate}
       canEdit={auth.can("SALES", "edit")}

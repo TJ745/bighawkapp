@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
+import { resolveCompanyId } from "@/lib/db/tenant-scope";
 import { Prisma } from "@/lib/generated/prisma/client";
 import type { InvoiceStatus, QuotationStatus } from "@/lib/generated/prisma/enums";
 import { num } from "@/lib/decimal";
@@ -19,6 +20,8 @@ export async function today() {
  */
 export async function refreshSalesStatuses() {
   const todayDate = parseDateOnly(await today());
+  // Resolved from the request, like the tenant filter does for every other query here.
+  const companyId = await resolveCompanyId();
   await db.quotation.updateMany({
     where: { status: { in: ["DRAFT", "SENT"] }, validUntil: { lt: todayDate } },
     data: { status: "EXPIRED" },
@@ -29,9 +32,12 @@ export async function refreshSalesStatuses() {
   });
   // Unpaid deposit after the invoice date (column-to-column comparison needs SQL). A deposit that
   // has been credited away is not late, which is why the credit counts towards it here too.
+  // Hand-written SQL, so the company goes in by hand: the tenant filter rewrites Prisma's own
+  // operations and cannot see this one, and a sweep is a write across every row it matches.
   await db.$executeRaw`
     UPDATE "Invoice" SET "status" = 'OVERDUE'
     WHERE "status" IN ('SENT', 'PARTIALLY_PAID') AND "depositAmount" > 0
+      AND "companyId" = ${companyId}
       AND "date" < ${todayDate}::date AND "paidTotal" + "creditedTotal" < "depositAmount"`;
 }
 

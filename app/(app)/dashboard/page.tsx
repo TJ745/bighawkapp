@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import { QuickActions, type QuickAction } from "@/components/dashboard/quick-actions";
 import { PageHeader } from "@/components/shared/page-header";
@@ -11,6 +12,7 @@ import {
   getRecentActivity,
   getTopCustomers,
 } from "@/lib/business/dashboard";
+import { operatorContext } from "@/lib/data/companies";
 import { refreshProcurementStatuses } from "@/lib/data/procurement";
 import { refreshSalesStatuses, today } from "@/lib/data/sales";
 import { presetRange, trailingRange } from "@/lib/date-range";
@@ -19,6 +21,23 @@ export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
   const auth = await requireAuth();
+
+  /**
+   * The operator's home is the list of customers, not a dashboard.
+   *
+   * They belong to no company, so until they pick one every figure here would be somebody's —
+   * whichever the scope falls back to — presented as if it were theirs. They choose first, and
+   * from then on this is that company's dashboard with the strip above saying whose.
+   *
+   * `operatorContext()` decides both this and that strip, so the two can never disagree. It
+   * applies however many customers there are: one click is cheap, and "whose records am I
+   * looking at" should not have an answer that depends on the size of the deployment.
+   */
+  if (auth.user.isSuperAdmin) {
+    const operator = await operatorContext();
+    if (operator && !operator.chosen) redirect("/settings/companies");
+  }
+
   const raw = await searchParams;
   const todayDate = await today();
   const hasBusinessManagement = auth.hasModule("BUSINESS_MANAGEMENT");

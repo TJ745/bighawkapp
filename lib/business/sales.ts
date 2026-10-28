@@ -1,9 +1,8 @@
 import "server-only";
 import { BusinessError } from "@/lib/auth/errors";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { getAppSettings } from "@/lib/data/settings";
 import { DOCUMENT_TYPES, MAX_DOCUMENT_BYTES, storeFile } from "@/lib/storage";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import { num } from "@/lib/decimal";
 import { today } from "@/lib/data/sales";
 import { deriveInvoiceStatus } from "./sales-status";
@@ -78,7 +77,7 @@ export async function storeAttachments(folder: string, files: File[]) {
 }
 
 /** Recomputes and stores paidTotal + status from the invoice's payments. The one place status is set. */
-export async function refreshInvoice(tx: Prisma.TransactionClient, id: string) {
+export async function refreshInvoice(tx: Tx, id: string) {
   const inv = await tx.invoice.findUniqueOrThrow({
     where: { id },
     select: { status: true, date: true, dueDate: true, grandTotal: true, depositAmount: true, sentAt: true },

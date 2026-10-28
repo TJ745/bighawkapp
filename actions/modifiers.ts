@@ -24,7 +24,7 @@ export async function createModifierGroup(input: unknown): Promise<ActionResult<
   return runAction(async () => {
     const auth = await authorizePosCapability("MODIFIERS", "INVENTORY", "create");
     const data = parseInput(modifierGroupSchema, input);
-    const clash = await db.modifierGroup.findUnique({ where: { name: data.name }, select: { id: true } });
+    const clash = await db.modifierGroup.findFirst({ where: { name: data.name }, select: { id: true } });
     if (clash) throw new BusinessError("A modifier group with this name already exists.");
 
     const group = await db.modifierGroup.create({
@@ -59,7 +59,7 @@ export async function updateModifierGroup(groupId: string, input: unknown): Prom
     const data = parseInput(modifierGroupSchema, input);
     const current = await db.modifierGroup.findUnique({ where: { id: groupId }, include: { options: { select: { id: true } } } });
     if (!current) throw new BusinessError("Modifier group not found.");
-    const clash = await db.modifierGroup.findUnique({ where: { name: data.name }, select: { id: true } });
+    const clash = await db.modifierGroup.findFirst({ where: { name: data.name }, select: { id: true } });
     if (clash && clash.id !== groupId) throw new BusinessError("A modifier group with this name already exists.");
 
     await db.modifierGroup.update({

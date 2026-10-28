@@ -12,6 +12,7 @@ import { getSupplierQuotation } from "@/lib/data/procurement";
 import { today } from "@/lib/data/sales";
 import { getAppSettings } from "@/lib/data/settings";
 import { addDays, parseDateOnly } from "@/lib/dates";
+import { auditMoney as money, recordAudit } from "@/lib/platform/audit";
 import { deleteStoredFile } from "@/lib/storage";
 import { supplierQuotationSchema } from "@/lib/validation/procurement";
 
@@ -59,6 +60,13 @@ export async function createSupplierQuotation(formData: FormData): Promise<Actio
     if (attachments.length) {
       await db.supplierQuotationAttachment.createMany({ data: attachments.map((a) => ({ ...a, supplierQuotationId: created.id })) });
     }
+    await recordAudit({
+      auth,
+      action: "procurement.supplier_quotation_created",
+      entity: "SupplierQuotation",
+      entityId: created.id,
+      summary: `Supplier quotation ${created.number} recorded for ${money(totals.grandTotal)}`,
+    });
     revalidate(created.id, input.supplierId);
     return { id: created.id };
   });
@@ -66,7 +74,7 @@ export async function createSupplierQuotation(formData: FormData): Promise<Actio
 
 export async function updateSupplierQuotation(id: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("PROCUREMENT", "edit");
+    const auth = await authorize("PROCUREMENT", "edit");
     const existing = await loadEditable(id);
     if (existing.status === "ACCEPTED" || existing.status === "REJECTED") {
       throw new BusinessError("Accepted or rejected quotations cannot be edited.");
@@ -97,17 +105,31 @@ export async function updateSupplierQuotation(id: string, formData: FormData): P
     if (attachments.length) {
       await db.supplierQuotationAttachment.createMany({ data: attachments.map((a) => ({ ...a, supplierQuotationId: id })) });
     }
+    await recordAudit({
+      auth,
+      action: "procurement.supplier_quotation_updated",
+      entity: "SupplierQuotation",
+      entityId: id,
+      summary: `Supplier quotation ${existing.number} edited — now ${money(totals.grandTotal)}`,
+    });
     revalidate(id, input.supplierId);
   });
 }
 
 export async function deleteSupplierQuotationAttachment(id: string, attachmentId: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("PROCUREMENT", "edit");
+    const auth = await authorize("PROCUREMENT", "edit");
     const attachment = await db.supplierQuotationAttachment.findFirst({ where: { id: attachmentId, supplierQuotationId: id } });
     if (!attachment) throw new BusinessError("Attachment not found.");
     await db.supplierQuotationAttachment.delete({ where: { id: attachmentId } });
     await deleteStoredFile(attachment.fileKey);
+    await recordAudit({
+      auth,
+      action: "procurement.supplier_quotation_attachment_deleted",
+      entity: "SupplierQuotation",
+      entityId: id,
+      summary: `Attachment ${attachment.name} removed from a supplier quotation`,
+    });
     revalidate(id);
   });
 }
@@ -115,21 +137,35 @@ export async function deleteSupplierQuotationAttachment(id: string, attachmentId
 /** The supplier's offer is complete and on file. */
 export async function markSupplierQuotationReceived(id: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("PROCUREMENT", "edit");
+    const auth = await authorize("PROCUREMENT", "edit");
     const q = await loadEditable(id);
     if (q.status !== "DRAFT") throw new BusinessError("Only draft quotations can be marked as received.");
     await db.supplierQuotation.update({ where: { id }, data: { status: "RECEIVED", receivedAt: new Date() } });
+    await recordAudit({
+      auth,
+      action: "procurement.supplier_quotation_received",
+      entity: "SupplierQuotation",
+      entityId: id,
+      summary: `Supplier quotation ${q.number} marked as received`,
+    });
     revalidate(id, q.supplierId);
   });
 }
 
 export async function decideSupplierQuotation(id: string, decision: "ACCEPTED" | "REJECTED"): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("PROCUREMENT", "edit");
+    const auth = await authorize("PROCUREMENT", "edit");
     if (decision !== "ACCEPTED" && decision !== "REJECTED") throw new BusinessError("Invalid decision.");
     const q = await loadEditable(id);
     if (q.status === "ACCEPTED" || q.status === "REJECTED") throw new BusinessError("This quotation has already been decided.");
     await db.supplierQuotation.update({ where: { id }, data: { status: decision, decidedAt: new Date() } });
+    await recordAudit({
+      auth,
+      action: decision === "ACCEPTED" ? "procurement.supplier_quotation_accepted" : "procurement.supplier_quotation_rejected",
+      entity: "SupplierQuotation",
+      entityId: id,
+      summary: `Supplier quotation ${q.number} ${decision === "ACCEPTED" ? "accepted" : "rejected"}`,
+    });
     revalidate(id, q.supplierId);
   });
 }
@@ -167,6 +203,13 @@ export async function convertSupplierQuotationToPurchase(id: string): Promise<Ac
       });
     });
 
+    await recordAudit({
+      auth,
+      action: "procurement.supplier_quotation_converted",
+      entity: "Purchase",
+      entityId: purchase.id,
+      summary: `Supplier quotation ${q.number} converted to purchase ${purchase.number}`,
+    });
     revalidate(id, q.supplierId);
     revalidatePath("/procurement/purchases");
     return { purchaseId: purchase.id };

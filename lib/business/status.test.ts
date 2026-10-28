@@ -163,7 +163,14 @@ describe("quotation status", () => {
 });
 
 describe("purchase status", () => {
-  const purchase = { receivedAt: null as Date | null, supplierReference: null as string | null, dueDate: date("2026-10-31"), grandTotal: 115, paidTotal: 0 };
+  const purchase = {
+    receivedAt: null as Date | null,
+    supplierReference: null as string | null,
+    dueDate: date("2026-10-31"),
+    grandTotal: 115,
+    paidTotal: 0,
+    creditedTotal: 0,
+  };
 
   it("is a draft before anything arrives", () => {
     assert.equal(derivePurchaseStatus(purchase, TODAY), "DRAFT");
@@ -193,6 +200,26 @@ describe("purchase status", () => {
   it("stops being a draft once it has been paid, even unreceived", () => {
     // Money has left the company, so calling it a draft would hide a real payment.
     assert.notEqual(derivePurchaseStatus({ ...purchase, paidTotal: 50 }, TODAY), "DRAFT");
+  });
+
+  it("reads Credited, never Paid, when the goods simply went back", () => {
+    // Nothing was paid. Calling it Paid would put a settled bill in the wrong story.
+    assert.equal(derivePurchaseStatus({ ...purchase, receivedAt: date("2026-10-05"), creditedTotal: 115 }, TODAY), "CREDITED");
+  });
+
+  it("reads Paid when money and credit together settle it", () => {
+    assert.equal(
+      derivePurchaseStatus({ ...purchase, receivedAt: date("2026-10-05"), paidTotal: 60, creditedTotal: 55 }, TODAY),
+      "PAID",
+    );
+  });
+
+  it("is no longer overdue once what was left has gone back", () => {
+    // A bill that is owed nothing cannot be late, whichever way it was settled.
+    assert.equal(
+      derivePurchaseStatus({ ...purchase, receivedAt: date("2026-10-05"), dueDate: date("2026-10-12"), creditedTotal: 115 }, TODAY),
+      "CREDITED",
+    );
   });
 });
 

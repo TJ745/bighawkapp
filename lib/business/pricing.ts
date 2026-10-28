@@ -1,8 +1,7 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { BusinessError } from "@/lib/auth/errors";
 import { num } from "@/lib/decimal";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import { round2 } from "./totals";
 
 /**
@@ -120,6 +119,6 @@ export function assertPriceEntrySensible(entry: { price: number | null; discount
 }
 
 /** Exactly one list may be the default, like the default branch. */
-export async function clearOtherDefaults(tx: Prisma.TransactionClient, keepId: string) {
+export async function clearOtherDefaults(tx: Tx, keepId: string) {
   await tx.priceList.updateMany({ where: { id: { not: keepId }, isDefault: true }, data: { isDefault: false } });
 }

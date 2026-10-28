@@ -36,12 +36,14 @@ export async function listCustomerAdvances(customerId: string) {
     notes: row.notes,
     cancelReason: row.cancelReason,
     ...advanceBalance(row),
+    // Named for the document rather than the invoice, because the supplier side renders through
+    // the same card and a second shape would mean a second component.
     applications: row.payments.map((payment) => ({
       paymentId: payment.id,
       amount: num(payment.amount),
       date: payment.date,
-      invoiceId: payment.invoice.id,
-      invoiceNumber: payment.invoice.number,
+      documentId: payment.invoice.id,
+      documentNumber: payment.invoice.number,
     })),
     refunds: row.refunds.map((refund) => ({
       id: refund.id,

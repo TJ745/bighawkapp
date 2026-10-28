@@ -6,7 +6,7 @@ import { BusinessError } from "@/lib/auth/errors";
 import { authorizeModule } from "@/lib/auth/session";
 import { parseInput, runAction, type ActionResult } from "@/lib/actions";
 import { adjustStock, setStockLevel, transferStock } from "@/lib/business/inventory";
-import { getCurrentBranch, listActiveBranches } from "@/lib/data/platform";
+import { assertBranchAllowed, getCurrentBranch, listTransferDestinations } from "@/lib/data/platform";
 import { recordAudit } from "@/lib/platform/audit";
 import { listStockMovements, type StockMovementRow } from "@/lib/data/items";
 import { stockAdjustmentSchema, stockTransferSchema } from "@/lib/validation/items";
@@ -35,8 +35,8 @@ export async function recordStockAdjustment(input: unknown): Promise<ActionResul
     const auth = await authorizeModule("POS", "INVENTORY", "edit");
     const data = parseInput(stockAdjustmentSchema, input);
 
-    const branch = (await listActiveBranches()).find((b) => b.id === data.branchId);
-    if (!branch) throw new BusinessError("That branch is not available.");
+    // A branch id arrives in a request, so it is checked against who is asking, not against a list.
+    const branch = await assertBranchAllowed(data.branchId);
     const { label, unit } = await describeVariant(data.variantId);
 
     let balance: number;
@@ -77,10 +77,13 @@ export async function recordStockTransfer(input: unknown): Promise<ActionResult>
   return runAction(async () => {
     const auth = await authorizeModule("POS", "INVENTORY", "edit");
     const data = parseInput(stockTransferSchema, input);
-    const branches = await listActiveBranches();
-    const from = branches.find((b) => b.id === data.fromBranchId);
-    const to = branches.find((b) => b.id === data.toBranchId);
-    if (!from || !to) throw new BusinessError("Both branches must be active.");
+    /**
+     * Stock leaves a branch this person works at and may arrive anywhere active: sending goods to
+     * a shop you do not staff is ordinary, taking them out of one you do not staff is not.
+     */
+    const from = await assertBranchAllowed(data.fromBranchId);
+    const to = (await listTransferDestinations()).find((b) => b.id === data.toBranchId);
+    if (!to) throw new BusinessError("Choose an active branch to send the stock to.");
     const { label, unit } = await describeVariant(data.variantId);
 
     await transferStock({

@@ -14,7 +14,10 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "test": "node --import tsx --test \"lib/**/*.test.ts\""
+    "test": "npm run test:unit && npm run test:engines",
+    "db:test:setup": "node tests/setup-database.mjs",
+    "test:unit": "node --import tsx --test \"lib/**/*.test.ts\"",
+    "test:engines": "node --conditions=react-server --import tsx --import ./tests/preload.mjs --test-isolation=none --test-concurrency=1 --test \"tests/engines/**/*.test.ts\""
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

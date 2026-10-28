@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "Tabs" };
 
 /** Open tabs: bills running under a name, settled when the customer leaves. */
 export default async function TabsPage() {
-  const auth = await requirePosCapability("TABS", "POS", "view");
+  const auth = await requirePosCapability("TABS", "POS_ORDERS", "view");
   const branch = await getCurrentBranch();
   const tabs = await listTabs(branch.id);
   const now = new Date();

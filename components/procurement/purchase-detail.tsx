@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, Eye, Inbox, PackagePlus, Pencil, Wallet } from "lucide-react";
+import { ArrowLeft, Download, Eye, Inbox, PackageMinus, PackagePlus, Pencil, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,6 +18,8 @@ import { PURCHASE_STATUS } from "@/lib/business/procurement-status";
 import type { PurchaseDetail } from "@/lib/data/procurement";
 import type { PurchaseReceiptRow } from "@/lib/data/receiving";
 import { ReceiveDialog, type ReceivableItemOption, type ReceivableLineView } from "./receive-dialog";
+import { ReturnGoodsDialog, type ReturnableLineView } from "./return-goods-dialog";
+import type { PurchaseReturnRow } from "@/lib/data/purchase-returns";
 
 type Props = {
   purchase: PurchaseDetail;
@@ -32,6 +34,9 @@ type Props = {
   branches: { id: string; name: string }[];
   currentBranchId: string | null;
   receipts: PurchaseReceiptRow[];
+  canReturn: boolean;
+  returnable: ReturnableLineView[];
+  returns: PurchaseReturnRow[];
 };
 
 export function PurchaseDetailView({
@@ -46,12 +51,16 @@ export function PurchaseDetailView({
   branches,
   currentBranchId,
   receipts,
+  canReturn,
+  returnable,
+  returns,
 }: Props) {
   const router = useRouter();
   const format = useFormat();
   const [payOpen, setPayOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [goodsOpen, setGoodsOpen] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
   const outstanding = receivable.filter((line) => line.outstandingQuantity > 0);
   const status = PURCHASE_STATUS[p.status];
   const pdfUrl = `/api/procurement/purchases/${p.id}/pdf`;
@@ -123,6 +132,12 @@ export function PurchaseDetailView({
             <Button variant="outline" onClick={() => setGoodsOpen(true)}>
               <PackagePlus />
               Receive goods
+            </Button>
+          ) : null}
+          {canReturn && returnable.length > 0 ? (
+            <Button variant="outline" onClick={() => setReturnOpen(true)}>
+              <PackageMinus />
+              Send goods back
             </Button>
           ) : null}
           {canEdit && !p.receivedAt ? (
@@ -264,6 +279,69 @@ export function PurchaseDetailView({
           </CardContent>
         </Card>
       ) : null}
+
+      {returns.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Sent back</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">Return</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="hidden sm:table-cell">Out of</TableHead>
+                  <TableHead className="hidden md:table-cell">Why</TableHead>
+                  <TableHead className="text-right">Off the bill</TableHead>
+                  <TableHead className="pr-6 text-right">&nbsp;</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {returns.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell className="pl-6 font-medium">
+                      {row.number}
+                      {row.status === "CANCELLED" ? <span className="ml-2 text-xs text-muted-foreground">cancelled</span> : null}
+                    </TableCell>
+                    <TableCell>{format.date(row.date)}</TableCell>
+                    <TableCell className="hidden text-muted-foreground sm:table-cell">{row.branchName}</TableCell>
+                    <TableCell className="hidden max-w-72 truncate text-muted-foreground md:table-cell">{row.reason}</TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">
+                      {row.status === "CANCELLED" ? "—" : format.money(row.grandTotal)}
+                      {row.refundedTotal > 0 ? (
+                        <span className="block text-xs font-normal text-muted-foreground">{format.money(row.refundedTotal)} back</span>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="pr-6 text-right">
+                      {/* The paperwork that travels with the goods. */}
+                      <Button asChild variant="ghost" size="sm">
+                        <a href={`/api/procurement/returns/${row.id}/pdf`} target="_blank" rel="noopener noreferrer">
+                          <Download />
+                          <span className="sr-only">Download {row.number}</span>
+                        </a>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <ReturnGoodsDialog
+        open={returnOpen}
+        onOpenChange={setReturnOpen}
+        purchaseId={p.id}
+        purchaseNumber={p.number}
+        lines={returnable}
+        branches={branches}
+        currentBranchId={currentBranchId}
+        accounts={accounts}
+        paidTotal={p.paidTotal}
+        today={today}
+      />
 
       <ReceiveDialog
         open={goodsOpen}

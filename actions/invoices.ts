@@ -15,6 +15,7 @@ import { renderEmailTemplate, sendEmail } from "@/lib/email/mailer";
 import { renderInvoicePdf } from "@/lib/pdf/sales";
 import { getFormatters } from "@/lib/settings/formatters";
 import { notify } from "@/lib/notifications/notify";
+import { auditMoney as money, recordAudit } from "@/lib/platform/audit";
 import { deleteStoredFile } from "@/lib/storage";
 import { invoicePaymentSchema, invoiceSchema, sendDocumentSchema } from "@/lib/validation/sales";
 
@@ -61,6 +62,13 @@ export async function createInvoice(formData: FormData): Promise<ActionResult<{ 
     const attachments = await storeAttachments(`invoices/${invoice.id}`, files);
     if (attachments.length) await db.invoiceAttachment.createMany({ data: attachments.map((a) => ({ ...a, invoiceId: invoice.id })) });
 
+    await recordAudit({
+      auth,
+      action: "sales.invoice_created",
+      entity: "Invoice",
+      entityId: invoice.id,
+      summary: `Invoice ${invoice.number} raised for ${money(totals.grandTotal)}`,
+    });
     revalidate(invoice.id, input.customerId);
     return { id: invoice.id };
   });
@@ -68,8 +76,8 @@ export async function createInvoice(formData: FormData): Promise<ActionResult<{ 
 
 export async function updateInvoice(id: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SALES", "edit");
-    const existing = await db.invoice.findUnique({ where: { id }, select: { paidTotal: true, status: true } });
+    const auth = await authorize("SALES", "edit");
+    const existing = await db.invoice.findUnique({ where: { id }, select: { number: true, paidTotal: true, status: true } });
     if (!existing) throw new BusinessError("Invoice not found.");
     const { payload, files } = readDocumentFormData(formData);
     const input = parseInput(invoiceSchema, payload);
@@ -103,17 +111,31 @@ export async function updateInvoice(id: string, formData: FormData): Promise<Act
     const attachments = await storeAttachments(`invoices/${id}`, files);
     if (attachments.length) await db.invoiceAttachment.createMany({ data: attachments.map((a) => ({ ...a, invoiceId: id })) });
 
+    await recordAudit({
+      auth,
+      action: "sales.invoice_updated",
+      entity: "Invoice",
+      entityId: id,
+      summary: `Invoice ${existing.number} edited — now ${money(totals.grandTotal)}`,
+    });
     revalidate(id, input.customerId);
   });
 }
 
 export async function deleteInvoiceAttachment(id: string, attachmentId: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SALES", "edit");
+    const auth = await authorize("SALES", "edit");
     const attachment = await db.invoiceAttachment.findFirst({ where: { id: attachmentId, invoiceId: id } });
     if (!attachment) throw new BusinessError("Attachment not found.");
     await db.invoiceAttachment.delete({ where: { id: attachmentId } });
     await deleteStoredFile(attachment.fileKey);
+    await recordAudit({
+      auth,
+      action: "sales.invoice_attachment_deleted",
+      entity: "Invoice",
+      entityId: id,
+      summary: `Attachment ${attachment.name} removed from an invoice`,
+    });
     revalidate(id);
   });
 }
@@ -148,6 +170,14 @@ export async function recordInvoicePayment(id: string, input: unknown): Promise<
       await refreshInvoice(tx, id);
     });
 
+    await recordAudit({
+      auth,
+      action: "sales.payment_recorded",
+      entity: "Invoice",
+      entityId: id,
+      summary: `Payment of ${money(data.amount)} recorded against ${inv.number}`,
+    });
+
     const f = await getFormatters();
     await notify({
       type: "CUSTOMER_PAYMENT_RECEIVED",
@@ -179,7 +209,7 @@ export async function prepareInvoiceEmail(id: string): Promise<ActionResult<{ to
 
 export async function sendInvoice(id: string, input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SALES", "edit");
+    const auth = await authorize("SALES", "edit");
     const message = parseInput(sendDocumentSchema, input);
     const inv = await getInvoice(id);
     if (!inv) throw new BusinessError("Invoice not found.");
@@ -196,6 +226,13 @@ export async function sendInvoice(id: string, input: unknown): Promise<ActionRes
       await tx.invoice.update({ where: { id }, data: { sentAt: new Date(), status: inv.status === "DRAFT" ? "SENT" : inv.status } });
       await refreshInvoice(tx, id);
     });
+    await recordAudit({
+      auth,
+      action: "sales.invoice_sent",
+      entity: "Invoice",
+      entityId: id,
+      summary: `Invoice ${inv.number} emailed to ${message.to}`,
+    });
     revalidate(id, inv.customerId);
   });
 }
@@ -203,13 +240,20 @@ export async function sendInvoice(id: string, input: unknown): Promise<ActionRes
 /** For customers without email: the invoice was printed/handed over, so it counts as issued. */
 export async function markInvoiceSent(id: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SALES", "edit");
-    const inv = await db.invoice.findUnique({ where: { id }, select: { status: true, customerId: true } });
+    const auth = await authorize("SALES", "edit");
+    const inv = await db.invoice.findUnique({ where: { id }, select: { number: true, status: true, customerId: true } });
     if (!inv) throw new BusinessError("Invoice not found.");
     if (inv.status !== "DRAFT") throw new BusinessError("Only draft invoices can be marked as sent.");
     await db.$transaction(async (tx) => {
       await tx.invoice.update({ where: { id }, data: { sentAt: new Date(), status: "SENT" } });
       await refreshInvoice(tx, id);
+    });
+    await recordAudit({
+      auth,
+      action: "sales.invoice_issued",
+      entity: "Invoice",
+      entityId: id,
+      summary: `Invoice ${inv.number} marked as issued by hand`,
     });
     revalidate(id, inv.customerId);
   });

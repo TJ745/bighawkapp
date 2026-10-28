@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Appointments" };
 
 /** One day's diary. The day shown comes from `?date=`, defaulting to today. */
 export default async function AppointmentsPage({ searchParams }: PageProps<"/pos/appointments">) {
-  const auth = await requirePosCapability("APPOINTMENTS", "POS", "view");
+  const auth = await requirePosCapability("APPOINTMENTS", "POS_BOOKINGS", "view");
   const [branch, todayDate, raw, format] = await Promise.all([getCurrentBranch(), today(), searchParams, getFormatters()]);
 
   const asked = typeof raw.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.date) ? raw.date : todayDate;

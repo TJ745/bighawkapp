@@ -16,6 +16,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
+import { QuotaNote } from "@/components/shared/quota-note";
 import { StatusMenu } from "@/components/shared/status-menu";
 import { setUserActive } from "@/actions/users";
 import type { RoleOption, UserListItem } from "@/lib/data/users";
@@ -26,8 +27,11 @@ import { UserFormDialog } from "./user-form-dialog";
 type UsersTableProps = {
   users: UserListItem[];
   roles: RoleOption[];
+  branches: { id: string; name: string }[];
   passwordPolicy: PasswordPolicy;
   canCreate: boolean;
+  /** Seats used against seats bought, shown beside the button that spends one. */
+  quota: { used: number; limit: number; remaining: number };
   canEdit: boolean;
   currentUserId: string;
   currentUserIsSuperAdmin: boolean;
@@ -36,8 +40,10 @@ type UsersTableProps = {
 export function UsersTable({
   users,
   roles,
+  branches,
   passwordPolicy,
   canCreate,
+  quota,
   canEdit,
   currentUserId,
   currentUserIsSuperAdmin,
@@ -73,9 +79,10 @@ export function UsersTable({
 
   return (
     <>
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <QuotaNote used={quota.used} limit={quota.limit} noun="users" />
         {canCreate ? (
-          <Button onClick={openCreate}>
+          <Button onClick={openCreate} disabled={quota.remaining === 0}>
             <Plus />
             New User
           </Button>
@@ -161,7 +168,8 @@ export function UsersTable({
         </div>
       )}
 
-      <UserFormDialog open={formOpen} onOpenChange={setFormOpen} roles={roles} passwordPolicy={passwordPolicy} user={editing} />
+      <UserFormDialog
+        branches={branches} open={formOpen} onOpenChange={setFormOpen} roles={roles} passwordPolicy={passwordPolicy} user={editing} />
       <ConfirmDialog
         open={Boolean(toggling)}
         onOpenChange={(o) => !o && setToggling(undefined)}

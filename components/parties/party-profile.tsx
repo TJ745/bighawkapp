@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Building2, FileText, Pencil, Power, PowerOff, Receipt, User, Wallet } from "lucide-react";
 import { toast } from "sonner";
+import { FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,6 +22,8 @@ type PartyProfileProps = {
   kind: PartyKind;
   party: PartyDetail;
   canEdit: boolean;
+  /** Whether this person may see the invoices a statement summarises. */
+  canViewSales?: boolean;
   initialTab?: string;
   // Content for transaction tabs, supplied by the Sales/Procurement/Projects modules.
   quotations?: React.ReactNode;
@@ -30,7 +33,7 @@ type PartyProfileProps = {
   projects?: React.ReactNode;
 };
 
-export function PartyProfile({ kind, party, canEdit, initialTab, quotations, sales, payments, advances, projects }: PartyProfileProps) {
+export function PartyProfile({ kind, party, canEdit, canViewSales, initialTab, quotations, sales, payments, advances, projects }: PartyProfileProps) {
   const router = useRouter();
   const format = useFormat();
   const config = PARTY_CONFIG[kind];
@@ -41,7 +44,10 @@ export function PartyProfile({ kind, party, canEdit, initialTab, quotations, sal
     { value: "quotations", label: config.quotationsTab },
     { value: "sales", label: config.salesTab },
     { value: "payments", label: "Payments" },
-    ...(kind === "customer" ? [{ value: "advances", label: "Advances" }, { value: "projects", label: "Projects" }] : []),
+    // Both parties hold money up front; only customers have projects. "Advances" reads the same
+    // either way — what is held for a customer, what is sitting with a supplier.
+    { value: "advances", label: kind === "customer" ? "Advances" : "Prepayments" },
+    ...(kind === "customer" ? [{ value: "projects", label: "Projects" }] : []),
     { value: "documents", label: "Documents" },
   ];
   const defaultTab = tabs.some((t) => t.value === initialTab) ? initialTab! : "overview";
@@ -81,8 +87,19 @@ export function PartyProfile({ kind, party, canEdit, initialTab, quotations, sal
             </p>
           </div>
         </div>
-        {canEdit ? (
-          <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
+          {/* A statement is a summary of invoices already issued, so viewing is enough to take
+              one — the same right that lets this page show the invoices in the first place. */}
+          {kind === "customer" && canViewSales ? (
+            <Button asChild variant="outline">
+              <a href={`/api/customers/${party.id}/statement`} target="_blank" rel="noopener noreferrer">
+                <FileDown />
+                Statement
+              </a>
+            </Button>
+          ) : null}
+          {canEdit ? (
+            <>
             <Button asChild variant="outline">
               <Link href={`${config.basePath}/${party.id}/edit`}>
                 <Pencil />
@@ -93,8 +110,9 @@ export function PartyProfile({ kind, party, canEdit, initialTab, quotations, sal
               {party.isActive ? <PowerOff /> : <Power />}
               {party.isActive ? "Deactivate" : "Activate"}
             </Button>
-          </div>
-        ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -132,11 +150,9 @@ export function PartyProfile({ kind, party, canEdit, initialTab, quotations, sal
         <TabsContent value="payments" className="pt-4">
           {payments ?? <EmptyState icon={Wallet} title="No payments yet" />}
         </TabsContent>
-        {kind === "customer" ? (
-          <TabsContent value="advances" className="pt-4">
-            {advances ?? <EmptyState icon={Wallet} title="No advances yet" />}
-          </TabsContent>
-        ) : null}
+        <TabsContent value="advances" className="pt-4">
+          {advances ?? <EmptyState icon={Wallet} title="No advances yet" />}
+        </TabsContent>
         {kind === "customer" ? (
           <TabsContent value="projects" className="pt-4">
             {projects ?? <EmptyState icon={FileText} title="No projects yet" />}

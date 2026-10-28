@@ -22,6 +22,8 @@ export const DOCUMENT_TYPES: { type: DocumentType; label: string; prefix: string
   { type: "GOODS_RECEIPT", label: "Goods Receipt", prefix: "GRN" },
   { type: "PAYMENT", label: "Payment", prefix: "PAY" },
   { type: "CUSTOMER_ADVANCE", label: "Customer Advance", prefix: "ADV" },
+  { type: "SUPPLIER_ADVANCE", label: "Supplier Prepayment", prefix: "PRE" },
+  { type: "PURCHASE_RETURN", label: "Purchase Return", prefix: "PRN" },
   { type: "PROJECT", label: "Project", prefix: "PROJ" },
   { type: "WORK_ORDER", label: "Work Order", prefix: "JOB" },
   { type: "STAY", label: "Room Stay", prefix: "STAY" },

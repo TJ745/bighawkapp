@@ -19,7 +19,7 @@ export async function runNotificationSweep(force = false) {
   if (!force && settings.lastNotificationSweepAt && Date.now() - settings.lastNotificationSweepAt.getTime() < SWEEP_INTERVAL_MS) return;
   // Claim the sweep first so concurrent requests don't run it twice.
   const claimed = await db.appSettings.updateMany({
-    where: { id: "default", ...(force ? {} : { OR: [{ lastNotificationSweepAt: null }, { lastNotificationSweepAt: { lt: new Date(Date.now() - SWEEP_INTERVAL_MS) } }] }) },
+    where: { ...(force ? {} : { OR: [{ lastNotificationSweepAt: null }, { lastNotificationSweepAt: { lt: new Date(Date.now() - SWEEP_INTERVAL_MS) } }] }) },
     data: { lastNotificationSweepAt: new Date() },
   });
   if (claimed.count === 0) return;

@@ -25,6 +25,15 @@ const userBase = {
   email: z.email("Enter a valid email address").trim().toLowerCase(),
   phone: optionalText,
   roleId: z.string().trim().min(1, "Role is required"),
+  /**
+   * Which branch this person works at. Blank means every branch — head office, an owner, a
+   * roaming manager — so it is deliberately optional rather than a required choice.
+   */
+  branchId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v ? v : null)),
   isActive: z.coerce.boolean().default(true),
 };
 

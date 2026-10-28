@@ -12,6 +12,7 @@ import { round2 } from "@/lib/business/totals";
 import { getPurchase } from "@/lib/data/procurement";
 import { num } from "@/lib/decimal";
 import { parseDateOnly } from "@/lib/dates";
+import { auditMoney as money, recordAudit } from "@/lib/platform/audit";
 import { deleteStoredFile } from "@/lib/storage";
 import { purchaseSchema } from "@/lib/validation/procurement";
 import { invoicePaymentSchema } from "@/lib/validation/sales";
@@ -59,6 +60,13 @@ export async function createPurchase(formData: FormData): Promise<ActionResult<{
     const attachments = await storeAttachments(`purchases/${purchase.id}`, files);
     if (attachments.length) await db.purchaseAttachment.createMany({ data: attachments.map((a) => ({ ...a, purchaseId: purchase.id })) });
 
+    await recordAudit({
+      auth,
+      action: "procurement.purchase_created",
+      entity: "Purchase",
+      entityId: purchase.id,
+      summary: `Purchase ${purchase.number} raised for ${money(totals.grandTotal)}`,
+    });
     revalidate(purchase.id, input.supplierId);
     return { id: purchase.id };
   });
@@ -66,8 +74,8 @@ export async function createPurchase(formData: FormData): Promise<ActionResult<{
 
 export async function updatePurchase(id: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("PROCUREMENT", "edit");
-    const existing = await db.purchase.findUnique({ where: { id }, select: { paidTotal: true } });
+    const auth = await authorize("PROCUREMENT", "edit");
+    const existing = await db.purchase.findUnique({ where: { id }, select: { number: true, paidTotal: true } });
     if (!existing) throw new BusinessError("Purchase not found.");
     const { payload, files } = readDocumentFormData(formData);
     const input = parseInput(purchaseSchema, payload);
@@ -100,17 +108,31 @@ export async function updatePurchase(id: string, formData: FormData): Promise<Ac
     const attachments = await storeAttachments(`purchases/${id}`, files);
     if (attachments.length) await db.purchaseAttachment.createMany({ data: attachments.map((a) => ({ ...a, purchaseId: id })) });
 
+    await recordAudit({
+      auth,
+      action: "procurement.purchase_updated",
+      entity: "Purchase",
+      entityId: id,
+      summary: `Purchase ${existing.number} edited — now ${money(totals.grandTotal)}`,
+    });
     revalidate(id, input.supplierId);
   });
 }
 
 export async function deletePurchaseAttachment(id: string, attachmentId: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("PROCUREMENT", "edit");
+    const auth = await authorize("PROCUREMENT", "edit");
     const attachment = await db.purchaseAttachment.findFirst({ where: { id: attachmentId, purchaseId: id } });
     if (!attachment) throw new BusinessError("Attachment not found.");
     await db.purchaseAttachment.delete({ where: { id: attachmentId } });
     await deleteStoredFile(attachment.fileKey);
+    await recordAudit({
+      auth,
+      action: "procurement.purchase_attachment_deleted",
+      entity: "Purchase",
+      entityId: id,
+      summary: `Attachment ${attachment.name} removed from a purchase`,
+    });
     revalidate(id);
   });
 }
@@ -118,13 +140,20 @@ export async function deletePurchaseAttachment(id: string, attachmentId: string)
 /** Goods/services were received from the supplier; the purchase now counts towards payables. */
 export async function markPurchaseReceived(id: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("PROCUREMENT", "edit");
-    const p = await db.purchase.findUnique({ where: { id }, select: { receivedAt: true, supplierId: true } });
+    const auth = await authorize("PROCUREMENT", "edit");
+    const p = await db.purchase.findUnique({ where: { id }, select: { number: true, receivedAt: true, supplierId: true } });
     if (!p) throw new BusinessError("Purchase not found.");
     if (p.receivedAt) throw new BusinessError("This purchase is already marked as received.");
     await db.$transaction(async (tx) => {
       await tx.purchase.update({ where: { id }, data: { receivedAt: new Date() } });
       await refreshPurchase(tx, id);
+    });
+    await recordAudit({
+      auth,
+      action: "procurement.purchase_marked_received",
+      entity: "Purchase",
+      entityId: id,
+      summary: `Purchase ${p.number} marked as received`,
     });
     revalidate(id, p.supplierId);
   });
@@ -160,6 +189,13 @@ export async function recordPurchasePayment(id: string, input: unknown): Promise
       await refreshPurchase(tx, id);
     });
 
+    await recordAudit({
+      auth,
+      action: "procurement.payment_recorded",
+      entity: "Purchase",
+      entityId: id,
+      summary: `Payment of ${money(data.amount)} recorded against ${p.number}`,
+    });
     revalidate(id, p.supplierId);
   });
 }

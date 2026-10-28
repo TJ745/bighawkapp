@@ -25,6 +25,12 @@ function mapEntry<T extends { amount: unknown; attachmentKey: string | null; att
   return {
     ...row,
     amount: num(row.amount as number),
+    /**
+     * Expenses carry VAT; income does not and reads as zero, so one dialog can serve both
+     * without asking which it is holding.
+     */
+    vatRate: "vatRate" in row ? num(row.vatRate as number) : 0,
+    vatAmount: "vatAmount" in row ? num(row.vatAmount as number) : 0,
     attachment:
       row.attachmentKey && row.attachmentName
         ? { name: row.attachmentName, url: fileUrl(row.attachmentKey), size: row.attachmentSize ?? 0 }

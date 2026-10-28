@@ -8,6 +8,7 @@ import { BusinessError } from "@/lib/auth/errors";
 import { authorize } from "@/lib/auth/session";
 import { formDataToObject, parseInput, runAction, type ActionResult } from "@/lib/actions";
 import type { PartyKind } from "@/lib/data/parties";
+import { recordAudit } from "@/lib/platform/audit";
 import { deleteStoredFile, DOCUMENT_TYPES, MAX_DOCUMENT_BYTES, storeFile } from "@/lib/storage";
 import { partyDocumentCategorySchema, partySchema, type PartyValues } from "@/lib/validation/parties";
 
@@ -15,6 +16,9 @@ import { partyDocumentCategorySchema, partySchema, type PartyValues } from "@/li
 const MODULE: Record<PartyKind, PermissionModule> = { customer: "CUSTOMERS", supplier: "PROCUREMENT" };
 const BASE_PATH: Record<PartyKind, string> = { customer: "/customers", supplier: "/procurement/suppliers" };
 const kindSchema = z.enum(["customer", "supplier"]);
+/** The word a person would use, for audit summaries that read as sentences. */
+const NOUN: Record<PartyKind, string> = { customer: "Customer", supplier: "Supplier" };
+
 
 function revalidate(kind: PartyKind, id?: string) {
   revalidatePath(BASE_PATH[kind]);
@@ -61,6 +65,13 @@ export async function createParty(kindInput: PartyKind, formData: FormData): Pro
     const row = kind === "customer" ? await db.customer.create({ data: input }) : await db.supplier.create({ data: input });
     await storeDocuments(kind, row.id, uploads, auth.user.id);
 
+    await recordAudit({
+      auth,
+      action: `${kind}.created`,
+      entity: NOUN[kind],
+      entityId: row.id,
+      summary: `${NOUN[kind]} ${row.name} added`,
+    });
     revalidate(kind);
     return { id: row.id };
   });
@@ -78,6 +89,13 @@ export async function updateParty(kindInput: PartyKind, id: string, formData: Fo
     else await db.supplier.update({ where: { id }, data: input });
     await storeDocuments(kind, id, uploads, auth.user.id);
 
+    await recordAudit({
+      auth,
+      action: `${kind}.updated`,
+      entity: NOUN[kind],
+      entityId: id,
+      summary: `${NOUN[kind]} ${input.name} updated`,
+    });
     revalidate(kind, id);
   });
 }
@@ -85,10 +103,17 @@ export async function updateParty(kindInput: PartyKind, id: string, formData: Fo
 export async function setPartyActive(kindInput: PartyKind, id: string, isActive: boolean): Promise<ActionResult> {
   return runAction(async () => {
     const kind = kindSchema.parse(kindInput);
-    await authorize(MODULE[kind], "edit");
-    await findParty(kind, id);
+    const auth = await authorize(MODULE[kind], "edit");
+    const party = await findParty(kind, id);
     if (kind === "customer") await db.customer.update({ where: { id }, data: { isActive } });
     else await db.supplier.update({ where: { id }, data: { isActive } });
+    await recordAudit({
+      auth,
+      action: `${kind}.${isActive ? "reactivated" : "deactivated"}`,
+      entity: NOUN[kind],
+      entityId: id,
+      summary: `${NOUN[kind]} ${party.name} ${isActive ? "reactivated" : "deactivated"}`,
+    });
     revalidate(kind, id);
   });
 }
@@ -101,6 +126,13 @@ export async function uploadPartyDocuments(kindInput: PartyKind, id: string, for
     const uploads = documentUploads(formData);
     if (uploads.length === 0) throw new BusinessError("Choose at least one file to upload.");
     await storeDocuments(kind, id, uploads, auth.user.id);
+    await recordAudit({
+      auth,
+      action: `${kind}.documents_uploaded`,
+      entity: NOUN[kind],
+      entityId: id,
+      summary: `${uploads.length} document${uploads.length === 1 ? "" : "s"} added to a ${kind}`,
+    });
     revalidate(kind, id);
   });
 }
@@ -108,7 +140,7 @@ export async function uploadPartyDocuments(kindInput: PartyKind, id: string, for
 export async function deletePartyDocument(kindInput: PartyKind, id: string, documentId: string): Promise<ActionResult> {
   return runAction(async () => {
     const kind = kindSchema.parse(kindInput);
-    await authorize(MODULE[kind], "edit");
+    const auth = await authorize(MODULE[kind], "edit");
     const doc =
       kind === "customer"
         ? await db.customerDocument.findFirst({ where: { id: documentId, customerId: id } })
@@ -119,6 +151,13 @@ export async function deletePartyDocument(kindInput: PartyKind, id: string, docu
     else await db.supplierDocument.delete({ where: { id: documentId } });
     await deleteStoredFile(doc.fileKey);
 
+    await recordAudit({
+      auth,
+      action: `${kind}.document_deleted`,
+      entity: NOUN[kind],
+      entityId: id,
+      summary: `Document ${doc.name} removed from a ${kind}`,
+    });
     revalidate(kind, id);
   });
 }

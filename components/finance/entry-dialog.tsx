@@ -16,7 +16,9 @@ import { FormField } from "@/components/shared/form-field";
 import { createExpense, createFinanceCategory, createOtherIncome, updateExpense, updateOtherIncome } from "@/actions/finance";
 import type { FinanceCategoryOption, FinanceEntryDetail } from "@/lib/data/finance";
 import { applyFieldErrors } from "@/lib/form-errors";
-import { financeEntrySchema, type FinanceEntryFormValues, type FinanceEntryValues } from "@/lib/validation/finance";
+import { useFormat } from "@/components/providers/format-provider";
+import { vatFromGross } from "@/lib/business/totals";
+import { expenseEntrySchema, type ExpenseEntryFormValues, type ExpenseEntryValues } from "@/lib/validation/finance";
 import { formatFileSize } from "@/components/shared/file-picker";
 import { toDateOnly } from "@/lib/dates";
 
@@ -57,23 +59,38 @@ function EntryForm({ kind, categories: initialCategories, accounts, today, entry
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const [categories, setCategories] = useState(initialCategories);
+  const format = useFormat();
   const [newCategory, setNewCategory] = useState<string | null>(null);
   const [savingCategory, setSavingCategory] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [removeAttachment, setRemoveAttachment] = useState(false);
 
-  const form = useForm<FinanceEntryFormValues, unknown, FinanceEntryValues>({
-    resolver: zodResolver(financeEntrySchema),
+  /**
+   * Only an expense carries VAT. Money coming in is invoiced through Sales, where VAT is already
+   * handled properly, so the income form is left exactly as it was.
+   */
+  const isExpense = kind === "expense";
+  // Typed to the expense shape, which is the income shape plus a VAT rate, so one form serves both.
+  const form = useForm<ExpenseEntryFormValues, unknown, ExpenseEntryValues>({
+    // The expense schema for both: its VAT rate defaults to 0 and the income form never sends
+    // one, so validating against the wider shape permits a field rather than requiring it.
+    resolver: zodResolver(expenseEntrySchema),
     defaultValues: {
       categoryId: entry?.categoryId ?? "",
       amount: entry?.amount ?? 0,
+      vatRate: entry?.vatRate ?? 0,
       date: entry ? toDateOnly(entry.date) : today,
       paymentAccountId: entry?.paymentAccountId ?? accounts[0]?.id ?? "",
       description: entry?.description ?? "",
     },
   });
   const { errors, isSubmitting } = form.formState;
-  const [categoryId, accountId] = useWatch({ control: form.control, name: ["categoryId", "paymentAccountId"] });
+  const [categoryId, accountId, amount, vatRate] = useWatch({
+    control: form.control,
+    name: ["categoryId", "paymentAccountId", "amount", "vatRate"],
+  });
+  // Shown live, from the same function the server stores: the split can never surprise anyone.
+  const split = vatFromGross(Number(amount) || 0, Number(vatRate) || 0);
 
   async function saveCategory() {
     if (!newCategory?.trim()) return;
@@ -92,11 +109,12 @@ function EntryForm({ kind, categories: initialCategories, accounts, today, entry
     }
   }
 
-  async function onSubmit(values: FinanceEntryValues) {
+  async function onSubmit(values: ExpenseEntryValues) {
     setFormError(null);
     const formData = new FormData();
     formData.set("categoryId", values.categoryId);
     formData.set("amount", String(values.amount));
+    if (isExpense) formData.set("vatRate", String(values.vatRate ?? 0));
     formData.set("date", values.date);
     formData.set("paymentAccountId", values.paymentAccountId);
     formData.set("description", values.description ?? "");
@@ -173,6 +191,20 @@ function EntryForm({ kind, categories: initialCategories, accounts, today, entry
           <Input id="entry-date" type="date" {...form.register("date")} />
         </FormField>
       </div>
+      {isExpense ? (
+        <FormField
+          label="VAT included in that amount (%)"
+          htmlFor="entry-vat"
+          error={errors.vatRate?.message}
+          description={
+            Number(vatRate) > 0
+              ? `${format.money(split.net)} before VAT, ${format.money(split.vat)} VAT. Leave at 0 when there is no tax invoice to reclaim against.`
+              : "Leave at 0 unless the supplier gave you a tax invoice showing VAT."
+          }
+        >
+          <Input id="entry-vat" type="number" step="0.01" min={0} max={100} {...form.register("vatRate")} readOnly={readOnly} />
+        </FormField>
+      ) : null}
       <FormField label={kind === "income" ? "Received into" : "Paid from"} htmlFor="entry-account" required error={errors.paymentAccountId?.message}>
         <Select value={accountId} onValueChange={(v) => form.setValue("paymentAccountId", v, { shouldValidate: true })}>
           <SelectTrigger id="entry-account" className="w-full">

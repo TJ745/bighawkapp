@@ -1,8 +1,7 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { BusinessError } from "@/lib/auth/errors";
 import { num } from "@/lib/decimal";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import { applyStockMovement, round3 } from "./inventory";
 import { round2 } from "./totals";
 
@@ -74,7 +73,7 @@ export function recipeCost(lines: RecipeLine[]) {
  * return can put back exactly that — even if the recipe changes in between.
  */
 export async function consumeIngredients(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: {
     saleItemId: string;
     lines: RecipeLine[];
@@ -126,7 +125,7 @@ export async function consumeIngredients(
  * of the line is coming back: 1 for a void, or returned ÷ sold for a partial return.
  */
 export async function returnIngredients(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: {
     saleItemId: string;
     portion: number;

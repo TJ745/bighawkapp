@@ -1,7 +1,6 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { BusinessError } from "@/lib/auth/errors";
-import type { Prisma } from "@/lib/generated/prisma/client";
 
 /**
  * Tickets.
@@ -77,7 +76,7 @@ export function assertPlacesAvailable(event: EventForSale, variantId: string, qu
 }
 
 /** Records the places a sold line took. */
-export async function issueTickets(tx: Prisma.TransactionClient, input: { eventId: string; saleItemId: string; places: number }) {
+export async function issueTickets(tx: Tx, input: { eventId: string; saleItemId: string; places: number }) {
   if (input.places <= 0) return;
   await tx.ticketIssued.create({ data: { eventId: input.eventId, saleItemId: input.saleItemId, places: input.places } });
 }
@@ -86,7 +85,7 @@ export async function issueTickets(tx: Prisma.TransactionClient, input: { eventI
  * Gives places back when a sale is voided or a ticket returned. `portion` is how much of the line
  * is coming back, and places are whole, so a part-return rounds up but never exceeds the line.
  */
-export async function returnTickets(tx: Prisma.TransactionClient, saleItemId: string, portion = 1) {
+export async function returnTickets(tx: Tx, saleItemId: string, portion = 1) {
   if (portion <= 0) return;
   const issued = await tx.ticketIssued.findUnique({ where: { saleItemId } });
   if (!issued) return;

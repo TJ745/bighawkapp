@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { listBranches } from "@/lib/data/platform";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -14,7 +15,7 @@ export const metadata: Metadata = { title: "User" };
 export default async function UserPage({ params }: PageProps<"/users/[id]">) {
   const { id } = await params;
   const auth = await requirePermission("USERS", "view");
-  const [user, roles, passwordPolicy] = await Promise.all([getUser(id), listRoleOptions(), getPasswordPolicy()]);
+  const [user, roles, passwordPolicy, branches] = await Promise.all([getUser(id), listRoleOptions(), getPasswordPolicy(), listBranches()]);
   // The Super Admin account is hidden from Users & Roles, including its detail page.
   if (!user || user.isSuperAdmin) notFound();
 
@@ -34,7 +35,8 @@ export default async function UserPage({ params }: PageProps<"/users/[id]">) {
           </Button>
         }
       />
-      <UserDetailView user={user} roles={roles} passwordPolicy={passwordPolicy} canEdit={canEdit} canToggle={canToggle} />
+      <UserDetailView
+        branches={branches.filter((b) => b.isActive).map((b) => ({ id: b.id, name: b.name }))} user={user} roles={roles} passwordPolicy={passwordPolicy} canEdit={canEdit} canToggle={canToggle} />
     </>
   );
 }

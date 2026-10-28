@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/shared/page-header";
 import { CustomerAdvancesTab, CustomerInvoicesTab, CustomerPaymentsTab, CustomerQuotationsTab } from "@/components/sales/customer-tabs";
-import { SupplierPaymentsTab, SupplierPurchasesTab, SupplierQuotationsTab } from "@/components/procurement/supplier-tabs";
+import { SupplierAdvancesTab, SupplierPaymentsTab, SupplierPurchasesTab, SupplierQuotationsTab } from "@/components/procurement/supplier-tabs";
 import { CustomerProjectsTab } from "@/components/projects/project-tabs";
 import type { PermissionModule } from "@/lib/generated/prisma/enums";
 import { requirePermission } from "@/lib/auth/session";
@@ -77,6 +77,7 @@ export async function PartyDetailPage({ kind, id, searchParams }: { kind: PartyK
             quotations: <SupplierQuotationsTab supplierId={party.id} canCreate={auth.can("PROCUREMENT", "create")} canEdit={auth.can("PROCUREMENT", "edit")} />,
             sales: <SupplierPurchasesTab supplierId={party.id} canCreate={auth.can("PROCUREMENT", "create")} canEdit={auth.can("PROCUREMENT", "edit")} />,
             payments: <SupplierPaymentsTab supplierId={party.id} />,
+            advances: <SupplierAdvancesTab supplierId={party.id} supplierName={party.name} auth={auth} />,
           }
         : {};
 
@@ -89,6 +90,7 @@ export async function PartyDetailPage({ kind, id, searchParams }: { kind: PartyK
         kind={kind}
         party={party}
         canEdit={auth.can(MODULE[kind], "edit")}
+        canViewSales={auth.can("SALES", "view")}
         initialTab={tab}
         {...salesTabs}
         projects={kind === "customer" && auth.can("PROJECTS", "view") ? <CustomerProjectsTab customerId={party.id} auth={auth} /> : undefined}

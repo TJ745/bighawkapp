@@ -2,107 +2,42 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { hash } from "@node-rs/argon2";
 import { PrismaClient } from "../lib/generated/prisma/client";
-import type { PermissionModule } from "../lib/generated/prisma/enums";
 
 const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 
-type Grant = [PermissionModule, { view: boolean; create: boolean; edit: boolean; delete: boolean }];
-const ALL = { view: true, create: true, edit: true, delete: true };
-const VIEW = { view: true, create: false, edit: false, delete: false };
-const WORK = { view: true, create: true, edit: true, delete: false };
-const MODULES: PermissionModule[] = ["CUSTOMERS", "SALES", "PROCUREMENT", "PROJECTS", "FINANCE", "USERS", "SETTINGS", "POS", "INVENTORY"];
+import { PRESET_ROLES } from "../lib/platform/preset-roles";
 
-// Preset roles. Admins can adjust these later from Users & Roles.
-const PRESET_ROLES: { name: string; description: string; grants: Grant[] }[] = [
-  {
-    name: "Admin",
-    description: "Full access to every module.",
-    grants: MODULES.map((m) => [m, ALL]),
-  },
-  {
-    name: "Sales User",
-    description: "Manages customers, quotations and invoices.",
-    grants: [
-      ["CUSTOMERS", WORK],
-      ["SALES", WORK],
-      ["PROJECTS", VIEW],
-    ],
-  },
-  {
-    name: "Finance User",
-    description: "Records income, expenses and payments.",
-    grants: [
-      ["FINANCE", ALL],
-      ["CUSTOMERS", VIEW],
-      ["SALES", VIEW],
-      ["PROCUREMENT", VIEW],
-      ["PROJECTS", VIEW],
-    ],
-  },
-  {
-    name: "Procurement User",
-    description: "Manages suppliers, supplier quotations and purchases.",
-    grants: [
-      ["PROCUREMENT", WORK],
-      ["CUSTOMERS", VIEW],
-      ["PROJECTS", VIEW],
-    ],
-  },
-  {
-    name: "Stock Keeper",
-    description: "Maintains the catalogue and stock levels.",
-    grants: [
-      ["INVENTORY", ALL],
-      ["PROCUREMENT", VIEW],
-    ],
-  },
-  {
-    name: "Cashier",
-    description: "Sells at the register and looks up customers.",
-    grants: [
-      ["POS", WORK],
-      ["CUSTOMERS", WORK],
-      // A cashier sells from the catalogue but does not maintain it.
-      ["INVENTORY", VIEW],
-    ],
-  },
-  {
-    name: "Branch Manager",
-    description: "Runs a branch: register, stock, purchases and reports.",
-    grants: [
-      ["POS", ALL],
-      ["INVENTORY", ALL],
-      ["CUSTOMERS", WORK],
-      ["SALES", WORK],
-      ["PROCUREMENT", WORK],
-      ["FINANCE", VIEW],
-      ["PROJECTS", VIEW],
-    ],
-  },
-  {
-    name: "Project User",
-    description: "Manages projects and views related sales and purchases.",
-    grants: [
-      ["PROJECTS", WORK],
-      ["CUSTOMERS", VIEW],
-      ["SALES", VIEW],
-      ["PROCUREMENT", VIEW],
-    ],
-  },
-];
 
-async function seedRoles() {
+/**
+ * The company every seeded row belongs to.
+ *
+ * One deployment still serves one customer today, so the seed keeps making exactly one. It is
+ * created rather than assumed because the tenant columns are NOT NULL: nothing can be written
+ * until a company exists to own it.
+ */
+async function seedCompany() {
+  const name = (await db.companySettings.findFirst({}))?.companyName?.trim() || "My Company";
+  const company = await db.company.upsert({
+    where: { slug: "first-company" },
+    update: {},
+    create: { slug: "first-company", name },
+  });
+  console.log(`Company ready (${company.name}).`);
+  return company.id;
+}
+
+async function seedRoles(companyId: string) {
   for (const role of PRESET_ROLES) {
     const saved = await db.role.upsert({
-      where: { name: role.name },
+      where: { companyId_name: { companyId, name: role.name } },
       update: { description: role.description, isSystem: true },
-      create: { name: role.name, description: role.description, isSystem: true },
+      create: { companyId, name: role.name, description: role.description, isSystem: true },
     });
     for (const [module, p] of role.grants) {
       await db.rolePermission.upsert({
         where: { roleId_module: { roleId: saved.id, module } },
         update: {},
-        create: { roleId: saved.id, module, canView: p.view, canCreate: p.create, canEdit: p.edit, canDelete: p.delete },
+        create: { companyId, roleId: saved.id, module, canView: p.view, canCreate: p.create, canEdit: p.edit, canDelete: p.delete },
       });
     }
   }
@@ -146,22 +81,23 @@ async function seedSuperAdmin() {
  * Module rows and the first branch. Business Management is on so an existing company keeps
  * working; POS is off until the BigHawk Super Admin enables it in Settings → Modules.
  */
-async function seedPlatform() {
+async function seedPlatform(companyId: string) {
   for (const [module, enabled] of [
     ["BUSINESS_MANAGEMENT", true],
     ["POS", false],
   ] as const) {
     await db.moduleSetting.upsert({
-      where: { module },
+      where: { companyId_module: { companyId, module } },
       update: {},
-      create: { module, enabled, enabledAt: enabled ? new Date() : null },
+      create: { companyId, module, enabled, enabledAt: enabled ? new Date() : null },
     });
   }
 
-  if ((await db.branch.count()) === 0) {
-    const company = await db.companySettings.findUnique({ where: { id: "default" } });
+  if ((await db.branch.count({ where: { companyId } })) === 0) {
+    const company = await db.companySettings.findFirst({});
     await db.branch.create({
       data: {
+        companyId,
         code: "MAIN",
         name: company?.companyName?.trim() || "Main Branch",
         phone: company?.phone ?? null,
@@ -172,12 +108,19 @@ async function seedPlatform() {
     });
     console.log("Default branch created (MAIN).");
   }
-  console.log("Modules ready (Business Management on, POS off).");
+  /**
+   * Report what is actually switched on, not what a fresh install would have. The old line said
+   * "Business Management on, POS off" unconditionally, which reads like the seed had just turned
+   * POS off — it never does, because the upsert above leaves an existing row alone.
+   */
+  const modules = await db.moduleSetting.findMany({ where: { companyId }, select: { module: true, enabled: true }, orderBy: { module: "asc" } });
+  console.log(`Modules ready (${modules.map((m) => `${m.module} ${m.enabled ? "on" : "off"}`).join(", ")}; existing settings left as they were).`);
 }
 
 async function main() {
-  await seedRoles();
-  await seedPlatform();
+  const companyId = await seedCompany();
+  await seedRoles(companyId);
+  await seedPlatform(companyId);
   await seedSuperAdmin();
 }
 

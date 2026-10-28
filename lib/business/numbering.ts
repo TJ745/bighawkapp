@@ -1,5 +1,6 @@
 import "server-only";
-import type { Prisma } from "@/lib/generated/prisma/client";
+import type { Tx } from "@/lib/db";
+import { resolveCompanyId } from "@/lib/db/tenant-scope";
 import type { DocumentType } from "@/lib/generated/prisma/enums";
 import { DOCUMENT_TYPES } from "@/lib/settings/defaults";
 import { formatDocumentNumber } from "./document-number";
@@ -18,12 +19,20 @@ type SequenceRow = {
  * transaction that creates the document, so the number is rolled back if the insert fails.
  * The sequence row is locked (SELECT ... FOR UPDATE), so concurrent callers never get duplicates.
  */
-export async function nextDocumentNumber(tx: Prisma.TransactionClient, type: DocumentType, date = new Date()) {
+export async function nextDocumentNumber(tx: Tx, type: DocumentType, date = new Date()) {
   const year = date.getFullYear();
+  /**
+   * Raw SQL does not go through the tenant filter — the filter rewrites Prisma's own operations,
+   * and this is a hand-written statement. So the company is named here. Without it the lock and
+   * the read below find *some* company's counter and the Prisma `update` that follows, which
+   * **is** filtered, then fails to find that row at all.
+   */
+  const companyId = await resolveCompanyId();
 
   let [row] = await tx.$queryRaw<SequenceRow[]>`
     SELECT "id", "prefix", "startingNumber", "nextNumber", "includeYear", "currentYear"
-    FROM "DocumentSequence" WHERE "type" = ${type}::"DocumentType" FOR UPDATE`;
+    FROM "DocumentSequence"
+    WHERE "type" = ${type}::"DocumentType" AND "companyId" = ${companyId} FOR UPDATE`;
 
   if (!row) {
     // First use before Settings were ever opened: create the row with defaults, then lock it.
@@ -34,7 +43,8 @@ export async function nextDocumentNumber(tx: Prisma.TransactionClient, type: Doc
     });
     [row] = await tx.$queryRaw<SequenceRow[]>`
       SELECT "id", "prefix", "startingNumber", "nextNumber", "includeYear", "currentYear"
-      FROM "DocumentSequence" WHERE "type" = ${type}::"DocumentType" FOR UPDATE`;
+      FROM "DocumentSequence"
+      WHERE "type" = ${type}::"DocumentType" AND "companyId" = ${companyId} FOR UPDATE`;
   }
 
   // When the year is part of the number, the counter restarts each year.

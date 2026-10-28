@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
+import { resolveCompanyId } from "@/lib/db/tenant-scope";
 import { BusinessError } from "@/lib/auth/errors";
-import { authorize, authorizeSuperAdmin } from "@/lib/auth/session";
+import { authorize, authorizeSuperAdmin, type AuthContext } from "@/lib/auth/session";
+import { recordAudit } from "@/lib/platform/audit";
 import { formDataToObject, parseInput, runAction, type ActionResult } from "@/lib/actions";
 import { deleteStoredFile, fileFromFormData, IMAGE_TYPES, MAX_IMAGE_BYTES, storeFile } from "@/lib/storage";
 import { getCompanySettings, getEmailSettings } from "@/lib/data/settings";
@@ -25,7 +27,14 @@ import {
   zatcaSettingsSchema,
 } from "@/lib/validation/settings";
 
-const SINGLETON_ID = "default";
+/**
+ * Which settings row to write. One row per company, so the key is the company itself rather
+ * than the literal "default" the single-tenant app used — a primary key a second company could
+ * never also have. `@@unique([companyId])` on each settings table is what makes this a key.
+ */
+async function settingsKey() {
+  return { companyId: await resolveCompanyId() };
+}
 const LOGO_FOLDER = "branding";
 
 function revalidateAll() {
@@ -33,26 +42,45 @@ function revalidateAll() {
   revalidatePath("/", "layout");
 }
 
+/**
+ * Settings changes go in the audit trail by name.
+ *
+ * They are made rarely and they change how the whole app behaves — what a document is numbered,
+ * what VAT is charged, how long a session lasts, where email goes. "Something in Settings
+ * changed last Tuesday" is not an answer anybody can act on, so the section is recorded, and
+ * where one field carries the weight on its own it is named too.
+ */
+async function auditSettings(auth: AuthContext, section: string, detail?: string) {
+  await recordAudit({
+    auth,
+    action: "settings.updated",
+    entity: "Settings",
+    entityId: section,
+    summary: `${section} settings updated${detail ? ` — ${detail}` : ""}`,
+  });
+}
+
 export async function updateCompanySettings(formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SETTINGS", "edit");
+    const auth = await authorize("SETTINGS", "edit");
     const raw = formDataToObject(formData);
     const input = parseInput(companySettingsSchema, raw);
 
-    const current = await db.companySettings.findUnique({ where: { id: SINGLETON_ID } });
+    const current = await db.companySettings.findFirst({});
     const logo = fileFromFormData(formData, "logo");
     const removeLogo = raw.removeLogo === "true";
     const stored = logo ? await storeFile(logo, LOGO_FOLDER, { allowedTypes: IMAGE_TYPES, maxBytes: MAX_IMAGE_BYTES }) : null;
 
     await db.companySettings.upsert({
-      where: { id: SINGLETON_ID },
+      where: await settingsKey(),
       update: { ...input, ...(stored ? { logoUrl: stored.url } : removeLogo ? { logoUrl: null } : {}) },
-      create: { id: SINGLETON_ID, ...input, logoUrl: stored?.url ?? null },
+      create: { ...input, logoUrl: stored?.url ?? null },
     });
 
     if ((stored || removeLogo) && current?.logoUrl?.startsWith("/api/files/")) {
       await deleteStoredFile(current.logoUrl.slice("/api/files/".length));
     }
+    await auditSettings(auth, "Company");
     revalidateAll();
   });
 }
@@ -67,7 +95,7 @@ export async function updateCompanySettings(formData: FormData): Promise<ActionR
  */
 export async function updateZatcaSettings(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SETTINGS", "edit");
+    const auth = await authorize("SETTINGS", "edit");
     const data = parseInput(zatcaSettingsSchema, input);
 
     if (data.mode !== "OFF") {
@@ -81,49 +109,54 @@ export async function updateZatcaSettings(input: unknown): Promise<ActionResult>
     }
 
     await db.zatcaSettings.upsert({
-      where: { id: SINGLETON_ID },
+      where: await settingsKey(),
       update: { mode: data.mode },
-      create: { id: SINGLETON_ID, mode: data.mode },
+      create: { mode: data.mode },
     });
+    await auditSettings(auth, "E-invoicing", data.mode === "OFF" ? "switched off" : "Phase 1 switched on");
     revalidateAll();
   });
 }
 
 export async function updateDocumentNumbering(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SETTINGS", "edit");
+    const auth = await authorize("SETTINGS", "edit");
     const data = parseInput(documentNumberingSchema, input);
 
+    const companyId = await resolveCompanyId();
     await db.$transaction(async (tx) => {
       for (const seq of data.sequences) {
-        const existing = await tx.documentSequence.findUnique({ where: { type: seq.type } });
+        const existing = await tx.documentSequence.findFirst({ where: { type: seq.type } });
         // Never move the counter backwards below numbers already issued.
         const nextNumber = existing ? Math.max(existing.nextNumber, seq.startingNumber) : seq.startingNumber;
         await tx.documentSequence.upsert({
-          where: { type: seq.type },
+          where: { companyId_type: { companyId, type: seq.type } },
           update: { prefix: seq.prefix, startingNumber: seq.startingNumber, includeYear: seq.includeYear, nextNumber },
           create: { type: seq.type, prefix: seq.prefix, startingNumber: seq.startingNumber, includeYear: seq.includeYear, nextNumber },
         });
       }
     });
+    await auditSettings(auth, "Document numbering");
     revalidatePath("/settings/numbering");
   });
 }
 
 export async function updateVatSettings(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SETTINGS", "edit");
+    const auth = await authorize("SETTINGS", "edit");
     const data = parseInput(vatSettingsSchema, input);
-    await db.appSettings.upsert({ where: { id: SINGLETON_ID }, update: data, create: { id: SINGLETON_ID, ...data } });
+    await db.appSettings.upsert({ where: await settingsKey(), update: data, create: { ...data } });
+    await auditSettings(auth, "VAT");
     revalidateAll();
   });
 }
 
 export async function updatePaymentTermsSettings(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SETTINGS", "edit");
+    const auth = await authorize("SETTINGS", "edit");
     const data = parseInput(paymentTermsSettingsSchema, input);
-    await db.appSettings.upsert({ where: { id: SINGLETON_ID }, update: data, create: { id: SINGLETON_ID, ...data } });
+    await db.appSettings.upsert({ where: await settingsKey(), update: data, create: { ...data } });
+    await auditSettings(auth, "Payment terms");
     revalidateAll();
   });
 }
@@ -161,66 +194,73 @@ export async function setPaymentAccountActive(accountId: string, isActive: boole
 
 export async function updateNotificationSettings(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SETTINGS", "edit");
+    const auth = await authorize("SETTINGS", "edit");
     const data = parseInput(notificationSettingsSchema, input);
+    const companyId = await resolveCompanyId();
     await db.$transaction(async (tx) => {
       await tx.appSettings.upsert({
-        where: { id: SINGLETON_ID },
+        where: await settingsKey(),
         update: { invoiceDueSoonDays: data.invoiceDueSoonDays },
-        create: { id: SINGLETON_ID, invoiceDueSoonDays: data.invoiceDueSoonDays },
+        create: { invoiceDueSoonDays: data.invoiceDueSoonDays },
       });
       for (const item of data.items) {
         await tx.notificationSetting.upsert({
-          where: { type: item.type },
+          where: { companyId_type: { companyId, type: item.type } },
           update: { enabled: item.enabled, inApp: item.inApp, email: item.email, recipientUserIds: item.recipientUserIds },
           create: { ...item },
         });
       }
     });
+    await auditSettings(auth, "Notifications");
     revalidatePath("/settings/notifications");
   });
 }
 
 export async function updateRegionalSettings(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SETTINGS", "edit");
+    const auth = await authorize("SETTINGS", "edit");
     const data = parseInput(regionalSettingsSchema, input);
-    await db.appSettings.upsert({ where: { id: SINGLETON_ID }, update: data, create: { id: SINGLETON_ID, ...data } });
+    await db.appSettings.upsert({ where: await settingsKey(), update: data, create: { ...data } });
+    await auditSettings(auth, "Date & regional");
     revalidateAll();
   });
 }
 
 export async function updateStylingSettings(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorizeSuperAdmin();
+    const auth = await authorizeSuperAdmin();
     const data = parseInput(stylingSettingsSchema, input);
-    await db.appSettings.upsert({ where: { id: SINGLETON_ID }, update: data, create: { id: SINGLETON_ID, ...data } });
+    await db.appSettings.upsert({ where: await settingsKey(), update: data, create: { ...data } });
+    await auditSettings(auth, "Document & email styling");
     revalidatePath("/settings/styling");
   });
 }
 
 export async function updateEmailTemplates(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorizeSuperAdmin();
+    const auth = await authorizeSuperAdmin();
     const data = parseInput(emailTemplatesSchema, input);
+    const companyId = await resolveCompanyId();
     await db.$transaction(
       data.templates.map((t) =>
         db.emailTemplate.upsert({
-          where: { key: t.key },
+          where: { companyId_key: { companyId, key: t.key } },
           update: { subject: t.subject, body: t.body },
           create: t,
         }),
       ),
     );
+    await auditSettings(auth, "Email templates");
     revalidatePath("/settings/styling");
   });
 }
 
 export async function updateSecuritySettings(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorizeSuperAdmin();
+    const auth = await authorizeSuperAdmin();
     const data = parseInput(securitySettingsSchema, input);
-    await db.appSettings.upsert({ where: { id: SINGLETON_ID }, update: data, create: { id: SINGLETON_ID, ...data } });
+    await db.appSettings.upsert({ where: await settingsKey(), update: data, create: { ...data } });
+    await auditSettings(auth, "Security");
     revalidatePath("/settings/security");
   });
 }
@@ -229,13 +269,14 @@ export async function updateSecuritySettings(input: unknown): Promise<ActionResu
 
 export async function updateEmailSettings(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorizeSuperAdmin();
+    const auth = await authorizeSuperAdmin();
     const { password, clearPassword, ...data } = parseInput(emailSettingsSchema, input);
     const current = await getEmailSettings();
     // A blank password keeps the saved one; clearing is explicit, so the field can stay write-only.
     const nextPassword = clearPassword ? "" : password || current.password;
     const row = { ...data, password: nextPassword };
-    await db.emailSettings.upsert({ where: { id: SINGLETON_ID }, update: row, create: { id: SINGLETON_ID, ...row } });
+    await db.emailSettings.upsert({ where: await settingsKey(), update: row, create: { ...row } });
+    await auditSettings(auth, "Email (SMTP)");
     revalidatePath("/settings/email");
   });
 }

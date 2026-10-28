@@ -16,18 +16,23 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { FormField } from "@/components/shared/form-field";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { useFormat } from "@/components/providers/format-provider";
-import { giveBackAdvance, recordAdvance, returnAdvanceToBalance, settleInvoiceFromAdvance, withdrawAdvance } from "@/actions/advances";
-import type { CustomerAdvanceRow } from "@/lib/data/advances";
-import type { SettleableInvoice } from "@/lib/data/advances";
 import { actionErrorLines } from "@/lib/action-error";
-import { CUSTOMER_ADVANCE_STATUS } from "@/lib/validation/advances";
+import {
+  ADVANCE_STATUS,
+  PARTY_ADVANCE_COPY,
+  type PartyAdvanceCopy,
+  type PartyAdvanceRow,
+  type PartyKind,
+  type SettleableDocument,
+} from "./party-advances-config";
 
 type Props = {
-  customerId: string;
-  customerName: string;
-  advances: CustomerAdvanceRow[];
-  /** Invoices with money still owing, for settling an advance against. */
-  invoices: SettleableInvoice[];
+  kind: PartyKind;
+  partyId: string;
+  partyName: string;
+  advances: PartyAdvanceRow[];
+  /** Invoices or purchases with money still owing, for settling an advance against. */
+  documents: SettleableDocument[];
   accounts: { id: string; name: string }[];
   today: string;
   canEdit: boolean;
@@ -35,18 +40,20 @@ type Props = {
 };
 
 /**
- * Money a customer has paid in advance.
+ * Money paid in advance, either way round.
  *
- * The card answers two questions a business actually asks: how much of their money are we holding,
- * and what has it gone towards. Applying an advance moves no money — the cash is already in the
- * account — so the wording never calls it a payment being made.
+ * The card answers two questions a business actually asks: how much of this money is outstanding,
+ * and what has it gone towards. Applying an advance moves no money — the cash has already changed
+ * hands — so the wording never calls it a payment being made. Everything that differs between a
+ * customer and a supplier lives in `party-advances-config.ts`.
  */
-export function CustomerAdvances({ customerId, customerName, advances, invoices, accounts, today, canEdit, canDelete }: Props) {
+export function PartyAdvances({ kind, partyId, partyName, advances, documents, accounts, today, canEdit, canDelete }: Props) {
+  const copy = PARTY_ADVANCE_COPY[kind];
   const format = useFormat();
   const [takeOpen, setTakeOpen] = useState(false);
-  const [applying, setApplying] = useState<CustomerAdvanceRow | null>(null);
-  const [refunding, setRefunding] = useState<CustomerAdvanceRow | null>(null);
-  const [cancelling, setCancelling] = useState<CustomerAdvanceRow | null>(null);
+  const [applying, setApplying] = useState<PartyAdvanceRow | null>(null);
+  const [refunding, setRefunding] = useState<PartyAdvanceRow | null>(null);
+  const [cancelling, setCancelling] = useState<PartyAdvanceRow | null>(null);
 
   const held = advances.filter((a) => a.status !== "CANCELLED").reduce((total, a) => total + a.available, 0);
 
@@ -55,23 +62,19 @@ export function CustomerAdvances({ customerId, customerName, advances, invoices,
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-3">
           <div className="space-y-1.5">
-            <CardTitle>Money held in advance</CardTitle>
-            <CardDescription>
-              {held > 0
-                ? `${format.money(held)} of ${customerName}'s money is held and not yet put against an invoice.`
-                : "Deposits and payments up front, before there is an invoice to put them against."}
-            </CardDescription>
+            <CardTitle>{copy.cardTitle}</CardTitle>
+            <CardDescription>{held > 0 ? copy.heldLine(format.money(held), partyName) : copy.blurb}</CardDescription>
           </div>
           {canEdit ? (
             <Button type="button" onClick={() => setTakeOpen(true)}>
               <Plus />
-              Record an advance
+              {copy.recordButton}
             </Button>
           ) : null}
         </CardHeader>
         {advances.length === 0 ? (
           <CardContent>
-            <EmptyState icon={Wallet} title="No advances yet" description="Record one when a customer pays before being invoiced." />
+            <EmptyState icon={Wallet} title={copy.emptyTitle} description={copy.emptyBody} />
           </CardContent>
         ) : (
           <CardContent className="space-y-3">
@@ -81,7 +84,7 @@ export function CustomerAdvances({ customerId, customerName, advances, invoices,
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="font-medium">{advance.number}</p>
-                      <StatusBadge tone={CUSTOMER_ADVANCE_STATUS[advance.status].tone}>{CUSTOMER_ADVANCE_STATUS[advance.status].label}</StatusBadge>
+                      <StatusBadge tone={ADVANCE_STATUS[advance.status].tone}>{ADVANCE_STATUS[advance.status].label}</StatusBadge>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {format.date(advance.date)} · {advance.accountName}
@@ -103,8 +106,8 @@ export function CustomerAdvances({ customerId, customerName, advances, invoices,
                       <li key={application.paymentId} className="flex items-center justify-between gap-2">
                         <span className="text-muted-foreground">
                           {format.money(application.amount)} settled{" "}
-                          <Link href={`/sales/invoices/${application.invoiceId}`} className="underline-offset-4 hover:underline">
-                            {application.invoiceNumber}
+                          <Link href={copy.documentHref(application.documentId)} className="underline-offset-4 hover:underline">
+                            {application.documentNumber}
                           </Link>{" "}
                           on {format.date(application.date)}
                         </span>
@@ -118,7 +121,7 @@ export function CustomerAdvances({ customerId, customerName, advances, invoices,
                     ))}
                     {advance.refunds.map((refund) => (
                       <li key={refund.id} className="text-muted-foreground">
-                        {format.money(refund.amount)} given back on {format.date(refund.date)} ({refund.accountName})
+                        {copy.refundLine(format.money(refund.amount), format.date(refund.date), refund.accountName)}
                       </li>
                     ))}
                   </ul>
@@ -126,13 +129,13 @@ export function CustomerAdvances({ customerId, customerName, advances, invoices,
 
                 {canEdit && advance.status !== "CANCELLED" && advance.available > 0 ? (
                   <div className="mt-3 flex flex-wrap gap-2 border-t pt-3">
-                    <Button type="button" size="sm" variant="outline" onClick={() => setApplying(advance)} disabled={invoices.length === 0}>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setApplying(advance)} disabled={documents.length === 0}>
                       <HandCoins />
-                      Settle an invoice
+                      {copy.settleButton}
                     </Button>
                     <Button type="button" size="sm" variant="outline" onClick={() => setRefunding(advance)}>
                       <Undo2 />
-                      Give it back
+                      {copy.giveBackButton}
                     </Button>
                     {canDelete && advance.applications.length === 0 && advance.refunds.length === 0 ? (
                       <Button type="button" size="sm" variant="ghost" onClick={() => setCancelling(advance)}>
@@ -148,27 +151,20 @@ export function CustomerAdvances({ customerId, customerName, advances, invoices,
         )}
       </Card>
 
-      <TakeAdvanceDialog
-        open={takeOpen}
-        onOpenChange={setTakeOpen}
-        customerId={customerId}
-        customerName={customerName}
-        accounts={accounts}
-        today={today}
-      />
-      <ApplyAdvanceDialog advance={applying} onClose={() => setApplying(null)} invoices={invoices} today={today} />
-      <RefundAdvanceDialog advance={refunding} onClose={() => setRefunding(null)} accounts={accounts} today={today} />
-      <CancelAdvanceDialog advance={cancelling} onClose={() => setCancelling(null)} />
+      <TakeAdvanceDialog open={takeOpen} onOpenChange={setTakeOpen} copy={copy} partyId={partyId} partyName={partyName} accounts={accounts} today={today} />
+      <ApplyAdvanceDialog advance={applying} onClose={() => setApplying(null)} copy={copy} documents={documents} today={today} />
+      <RefundAdvanceDialog advance={refunding} onClose={() => setRefunding(null)} copy={copy} accounts={accounts} today={today} />
+      <CancelAdvanceDialog advance={cancelling} onClose={() => setCancelling(null)} copy={copy} />
     </div>
   );
 
   async function takeBack(paymentId: string) {
-    const result = await returnAdvanceToBalance({ paymentId });
+    const result = await copy.api.takeBack(paymentId);
     if (!result.success) {
       toast.error(actionErrorLines(result).join(" "));
       return;
     }
-    toast.success(`${format.money(result.data.amount)} taken back off ${result.data.invoiceNumber}`);
+    toast.success(`${format.money(result.data.amount)} taken back off ${result.data.documentNumber}`);
   }
 }
 
@@ -195,15 +191,17 @@ function Problems({ problems }: { problems: string[] }) {
 function TakeAdvanceDialog({
   open,
   onOpenChange,
-  customerId,
-  customerName,
+  copy,
+  partyId,
+  partyName,
   accounts,
   today,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  customerId: string;
-  customerName: string;
+  copy: PartyAdvanceCopy;
+  partyId: string;
+  partyName: string;
   accounts: { id: string; name: string }[];
   today: string;
 }) {
@@ -220,7 +218,7 @@ function TakeAdvanceDialog({
     setSaving(true);
     setProblems([]);
     try {
-      const result = await recordAdvance({ customerId, amount, date, paymentAccountId: accountId, reference, notes });
+      const result = await copy.api.record({ partyId, amount, date, paymentAccountId: accountId, reference, notes });
       if (!result.success) {
         setProblems(actionErrorLines(result));
         return;
@@ -240,10 +238,8 @@ function TakeAdvanceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Record an advance from {customerName}</DialogTitle>
-          <DialogDescription>
-            Money received before there is an invoice for it. It counts as income on the day it arrives, and can settle an invoice later.
-          </DialogDescription>
+          <DialogTitle>{copy.recordTitle(partyName)}</DialogTitle>
+          <DialogDescription>{copy.recordBlurb}</DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
           <Problems problems={problems} />
@@ -251,11 +247,11 @@ function TakeAdvanceDialog({
             <FormField label="Amount" htmlFor="advance-amount" required>
               <Input id="advance-amount" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="0.00" />
             </FormField>
-            <FormField label="Date received" htmlFor="advance-date" required>
+            <FormField label={copy.dateLabel} htmlFor="advance-date" required>
               <Input id="advance-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </FormField>
           </div>
-          <FormField label="Into which account" htmlFor="advance-account" required>
+          <FormField label={copy.accountLabel} htmlFor="advance-account" required>
             <Select value={accountId} onValueChange={setAccountId}>
               <SelectTrigger id="advance-account" className="w-full">
                 <SelectValue placeholder="Choose an account" />
@@ -272,7 +268,7 @@ function TakeAdvanceDialog({
           <FormField label="Reference" htmlFor="advance-reference" description="Transfer number, cheque number…">
             <Input id="advance-reference" value={reference} onChange={(e) => setReference(e.target.value)} autoComplete="off" />
           </FormField>
-          <FormField label="Note" htmlFor="advance-notes" description="What the deposit is for.">
+          <FormField label="Note" htmlFor="advance-notes" description={copy.notesHint}>
             <Textarea id="advance-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
           </FormField>
         </div>
@@ -293,24 +289,26 @@ function TakeAdvanceDialog({
 function ApplyAdvanceDialog({
   advance,
   onClose,
-  invoices,
+  copy,
+  documents,
   today,
 }: {
-  advance: CustomerAdvanceRow | null;
+  advance: PartyAdvanceRow | null;
   onClose: () => void;
-  invoices: SettleableInvoice[];
+  copy: PartyAdvanceCopy;
+  documents: SettleableDocument[];
   today: string;
 }) {
   const router = useRouter();
   const format = useFormat();
-  const [invoiceId, setInvoiceId] = useState("");
+  const [documentId, setDocumentId] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(today);
   const [saving, setSaving] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
 
-  const chosen = invoices.find((invoice) => invoice.id === invoiceId);
-  // The most that can sensibly go on this invoice: whichever runs out first.
+  const chosen = documents.find((document) => document.id === documentId);
+  // The most that can sensibly go on this document: whichever runs out first.
   const suggested = chosen && advance ? Math.min(chosen.owing, advance.available) : 0;
 
   async function submit() {
@@ -318,12 +316,12 @@ function ApplyAdvanceDialog({
     setSaving(true);
     setProblems([]);
     try {
-      const result = await settleInvoiceFromAdvance({ advanceId: advance.id, invoiceId, amount: amount || String(suggested), date });
+      const result = await copy.api.settle({ advanceId: advance.id, documentId, amount: amount || String(suggested), date });
       if (!result.success) {
         setProblems(actionErrorLines(result));
         return;
       }
-      toast.success(`${format.money(result.data.amount)} of ${result.data.advanceNumber} settled ${result.data.invoiceNumber}`);
+      toast.success(`${format.money(result.data.amount)} of ${result.data.advanceNumber} settled ${result.data.documentNumber}`);
       onClose();
       router.refresh();
     } finally {
@@ -335,41 +333,34 @@ function ApplyAdvanceDialog({
     <Dialog open={Boolean(advance)} onOpenChange={(open) => (open ? null : onClose())}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Settle an invoice from {advance?.number}</DialogTitle>
-          <DialogDescription>
-            No money moves — it is already in the account. This decides which invoice the customer&apos;s money settles.
-          </DialogDescription>
+          <DialogTitle>{copy.settleTitle(advance?.number ?? "")}</DialogTitle>
+          <DialogDescription>{copy.settleBlurb}</DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
           <Problems problems={problems} />
-          <FormField label="Which invoice" htmlFor="apply-invoice" required>
+          <FormField label={copy.documentLabel} htmlFor="apply-document" required>
             <Select
-              value={invoiceId}
+              value={documentId}
               onValueChange={(value) => {
-                setInvoiceId(value);
-                const invoice = invoices.find((i) => i.id === value);
-                if (invoice && advance) setAmount(String(Math.min(invoice.owing, advance.available)));
+                setDocumentId(value);
+                const document = documents.find((d) => d.id === value);
+                if (document && advance) setAmount(String(Math.min(document.owing, advance.available)));
               }}
             >
-              <SelectTrigger id="apply-invoice" className="w-full">
-                <SelectValue placeholder="Choose an invoice" />
+              <SelectTrigger id="apply-document" className="w-full">
+                <SelectValue placeholder={copy.documentPlaceholder} />
               </SelectTrigger>
               <SelectContent>
-                {invoices.map((invoice) => (
-                  <SelectItem key={invoice.id} value={invoice.id}>
-                    {invoice.number} — {format.money(invoice.owing)} owing
+                {documents.map((document) => (
+                  <SelectItem key={document.id} value={document.id}>
+                    {document.number} — {format.money(document.owing)} owing
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </FormField>
           <div className="grid gap-5 sm:grid-cols-2">
-            <FormField
-              label="How much"
-              htmlFor="apply-amount"
-              required
-              description={advance ? `${format.money(advance.available)} available` : undefined}
-            >
+            <FormField label="How much" htmlFor="apply-amount" required description={advance ? `${format.money(advance.available)} available` : undefined}>
               <Input id="apply-amount" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="0.00" />
             </FormField>
             <FormField label="Date" htmlFor="apply-date" required>
@@ -381,9 +372,9 @@ function ApplyAdvanceDialog({
           <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button type="button" onClick={submit} disabled={saving || !invoiceId}>
+          <Button type="button" onClick={submit} disabled={saving || !documentId}>
             {saving ? <Loader2 className="animate-spin" /> : null}
-            Settle it
+            {copy.settleAction}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -394,11 +385,13 @@ function ApplyAdvanceDialog({
 function RefundAdvanceDialog({
   advance,
   onClose,
+  copy,
   accounts,
   today,
 }: {
-  advance: CustomerAdvanceRow | null;
+  advance: PartyAdvanceRow | null;
   onClose: () => void;
+  copy: PartyAdvanceCopy;
   accounts: { id: string; name: string }[];
   today: string;
 }) {
@@ -416,12 +409,18 @@ function RefundAdvanceDialog({
     setSaving(true);
     setProblems([]);
     try {
-      const result = await giveBackAdvance({ advanceId: advance.id, amount: amount || String(advance.available), date, paymentAccountId: accountId, reference });
+      const result = await copy.api.giveBack({
+        advanceId: advance.id,
+        amount: amount || String(advance.available),
+        date,
+        paymentAccountId: accountId,
+        reference,
+      });
       if (!result.success) {
         setProblems(actionErrorLines(result));
         return;
       }
-      toast.success(`${format.money(result.data.amount)} given back`);
+      toast.success(`${format.money(result.data.amount)} recorded`);
       onClose();
       router.refresh();
     } finally {
@@ -433,10 +432,8 @@ function RefundAdvanceDialog({
     <Dialog open={Boolean(advance)} onOpenChange={(open) => (open ? null : onClose())}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Give back {advance?.number}</DialogTitle>
-          <DialogDescription>
-            Money leaving the business today. Only what has not already settled an invoice can be returned.
-          </DialogDescription>
+          <DialogTitle>{copy.giveBackTitle(advance?.number ?? "")}</DialogTitle>
+          <DialogDescription>{copy.giveBackBlurb}</DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
           <Problems problems={problems} />
@@ -448,7 +445,7 @@ function RefundAdvanceDialog({
               <Input id="refund-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </FormField>
           </div>
-          <FormField label="Out of which account" htmlFor="refund-account" required>
+          <FormField label={copy.giveBackAccountLabel} htmlFor="refund-account" required>
             <Select value={accountId} onValueChange={setAccountId}>
               <SelectTrigger id="refund-account" className="w-full">
                 <SelectValue placeholder="Choose an account" />
@@ -472,7 +469,7 @@ function RefundAdvanceDialog({
           </Button>
           <Button type="button" onClick={submit} disabled={saving || !accountId}>
             {saving ? <Loader2 className="animate-spin" /> : null}
-            Give it back
+            {copy.giveBackAction}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -480,7 +477,7 @@ function RefundAdvanceDialog({
   );
 }
 
-function CancelAdvanceDialog({ advance, onClose }: { advance: CustomerAdvanceRow | null; onClose: () => void }) {
+function CancelAdvanceDialog({ advance, onClose, copy }: { advance: PartyAdvanceRow | null; onClose: () => void; copy: PartyAdvanceCopy }) {
   const router = useRouter();
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
@@ -491,7 +488,7 @@ function CancelAdvanceDialog({ advance, onClose }: { advance: CustomerAdvanceRow
     setSaving(true);
     setProblems([]);
     try {
-      const result = await withdrawAdvance({ advanceId: advance.id, reason });
+      const result = await copy.api.withdraw({ advanceId: advance.id, reason });
       if (!result.success) {
         setProblems(actionErrorLines(result));
         return;
@@ -510,9 +507,7 @@ function CancelAdvanceDialog({ advance, onClose }: { advance: CustomerAdvanceRow
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Cancel {advance?.number}?</DialogTitle>
-          <DialogDescription>
-            For an advance keyed in error. The record stays, but the money comes back out of income and the account balance.
-          </DialogDescription>
+          <DialogDescription>{copy.cancelBlurb}</DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
           <Problems problems={problems} />
@@ -526,7 +521,7 @@ function CancelAdvanceDialog({ advance, onClose }: { advance: CustomerAdvanceRow
           </Button>
           <Button type="button" variant="destructive" onClick={submit} disabled={saving || !reason.trim()}>
             {saving ? <Loader2 className="animate-spin" /> : null}
-            Cancel the advance
+            Cancel it
           </Button>
         </DialogFooter>
       </DialogContent>

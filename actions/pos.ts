@@ -70,6 +70,7 @@ export async function completeSale(
       today: todayDate,
       vatEnabled: settings.vatEnabled,
       defaultVatRate: settings.defaultVatRate,
+      clientReference: data.clientReference,
     });
 
     /**

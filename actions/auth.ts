@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { APIError } from "better-auth/api";
 import { db } from "@/lib/db";
+import { runForCompany } from "@/lib/db/tenant";
 import { auth, PASSWORD_RESET_THROTTLE_SECONDS } from "@/lib/auth/auth";
 import { BusinessError } from "@/lib/auth/errors";
 import { parseInput, runAction, type ActionResult } from "@/lib/actions";
@@ -19,11 +20,16 @@ const INVALID_CREDENTIALS = "Invalid email or password.";
 export async function signInWithPassword(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
     const { email, password } = parseInput(loginSchema, input);
-    const settings = await getAppSettings();
     const user = await db.user.findUnique({
       where: { email },
-      select: { id: true, failedLoginAttempts: true, lockedUntil: true },
+      select: { id: true, failedLoginAttempts: true, lockedUntil: true, companyId: true },
     });
+    /**
+     * The lockout policy belongs to the company this account works for — not to whichever
+     * company the deployment answers with for a visitor it cannot yet identify. The address
+     * already names the account, so the right settings are knowable before the password is.
+     */
+    const settings = user?.companyId ? await runForCompany(user.companyId, getAppSettings) : await getAppSettings();
 
     if (user?.lockedUntil && user.lockedUntil > new Date()) {
       const minutesLeft = Math.max(1, Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000));
@@ -80,7 +86,7 @@ export async function requestPasswordReset(input: unknown): Promise<ActionResult
 
     const user = await db.user.findUnique({
       where: { email },
-      select: { id: true, isActive: true, passwordResetRequestedAt: true },
+      select: { id: true, isActive: true, passwordResetRequestedAt: true, companyId: true },
     });
 
     // An unknown or deactivated account gets the same answer, and no email.
@@ -96,7 +102,14 @@ export async function requestPasswordReset(input: unknown): Promise<ActionResult
      * No `redirectTo`: the link in the email is built from the token by `sendResetPassword`, so
      * BetterAuth's own redirect hop is not used and there is no callback URL to validate.
      */
-    await auth.api.requestPasswordReset({ body: { email }, headers: await headers() });
+    const headerList = await headers();
+    /**
+     * Sending runs as the account's own company: `sendResetPassword` reads that company's email
+     * template and SMTP settings, and a link worded by another customer's template would be
+     * wrong even when it works.
+     */
+    const send = () => auth.api.requestPasswordReset({ body: { email }, headers: headerList });
+    await (user.companyId ? runForCompany(user.companyId, send) : send());
 
     return { message: RESET_REQUESTED };
   });

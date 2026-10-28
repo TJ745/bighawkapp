@@ -1,8 +1,7 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { BusinessError } from "@/lib/auth/errors";
 import { num } from "@/lib/decimal";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import type { StockMovementKind } from "@/lib/generated/prisma/enums";
 
 /**
@@ -36,7 +35,6 @@ export type StockMovementInput = {
   allowNegative?: boolean;
 };
 
-type Tx = Prisma.TransactionClient;
 
 /**
  * Applies one stock change. Must run inside a transaction so the level, the movement and whatever

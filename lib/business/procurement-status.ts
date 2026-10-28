@@ -17,6 +17,8 @@ export type PurchaseStatusInput = {
   dueDate: Date;
   grandTotal: number;
   paidTotal: number;
+  /** What goods going back have taken off the bill. Settles a purchase without any money moving. */
+  creditedTotal: number;
 };
 
 /**
@@ -26,8 +28,11 @@ export type PurchaseStatusInput = {
  * Overdue  = anything received with a balance after the due date.
  */
 export function derivePurchaseStatus(p: PurchaseStatusInput, today: string): PurchaseStatus {
-  const remaining = p.grandTotal - p.paidTotal;
-  if (p.grandTotal > 0 && remaining <= 0) return "PAID";
+  const remaining = p.grandTotal - p.paidTotal - p.creditedTotal;
+  if (p.grandTotal > 0 && remaining <= 0) {
+    // Settled by goods going back was never paid, and should not read as if it had been.
+    return p.creditedTotal > 0 && p.paidTotal <= 0 ? "CREDITED" : "PAID";
+  }
   if (!p.receivedAt && p.paidTotal === 0) return "DRAFT";
   if (dateOnly(p.dueDate) < today && remaining > 0) return "OVERDUE";
   if (p.paidTotal > 0) return "PARTIALLY_PAID";
@@ -49,6 +54,7 @@ export const PURCHASE_STATUS: Record<PurchaseStatus, { label: string; tone: Stat
   PARTIALLY_PAID: { label: "Partially Paid", tone: "warning" },
   PAID: { label: "Paid", tone: "success" },
   OVERDUE: { label: "Overdue", tone: "danger" },
+  CREDITED: { label: "Credited", tone: "success" },
 };
 
 // --- Manual status changes ---------------------------------------------------

@@ -13,8 +13,26 @@ import {
 } from "@/lib/settings/defaults";
 import type { RegionalSettings } from "@/lib/format";
 import type { PasswordPolicy } from "@/lib/validation/users";
+import { activeCompanyId } from "@/lib/db/tenant-scope";
 
-const SINGLETON_ID = "default";
+/**
+ * A read memoised per request **and per company**.
+ *
+ * React's `cache()` keys on the arguments, and these readers take none — which was right while a
+ * settings row was a single global row. Now that each company has its own, a process that acts
+ * for two of them (the operator switching, the test harness) would be handed the first one's
+ * settings for the second. Passing the company in is what keeps the memo honest; no caller has
+ * to know, because the wrapper asks.
+ */
+function perCompany<T>(read: () => Promise<T>): () => Promise<T> {
+  const memo = cache(async (companyId: string | null) => {
+    // `companyId` is the memo's key and nothing more — the read itself is filtered by the scope,
+    // which is already in force. It is named rather than ignored so that is plain to see.
+    void companyId;
+    return read();
+  });
+  return async () => memo(await activeCompanyId());
+}
 
 // Reads a single-row settings table, creating the row with defaults on first access.
 // Concurrent first requests may both try to create it; the loser simply re-reads.
@@ -32,20 +50,20 @@ async function readSingleton<T>(find: () => Promise<T | null>, create: () => Pro
 }
 
 /** Company identity (Settings → Company). Creates the row on first access. */
-export const getCompanySettings = cache(async () =>
+export const getCompanySettings = perCompany(async () =>
   readSingleton(
-    () => db.companySettings.findUnique({ where: { id: SINGLETON_ID } }),
-    () => db.companySettings.create({ data: { id: SINGLETON_ID } }),
+    () => db.companySettings.findFirst({}),
+    () => db.companySettings.create({ data: {} }),
   ),
 );
 
 export type CompanySettings = Awaited<ReturnType<typeof getCompanySettings>>;
 
 /** Saudi e-invoicing settings (Settings → E-invoicing). Creates the row on first access. */
-export const getZatcaSettings = cache(async () =>
+export const getZatcaSettings = perCompany(async () =>
   readSingleton(
-    () => db.zatcaSettings.findUnique({ where: { id: SINGLETON_ID } }),
-    () => db.zatcaSettings.create({ data: { id: SINGLETON_ID } }),
+    () => db.zatcaSettings.findFirst({}),
+    () => db.zatcaSettings.create({ data: {} }),
   ),
 );
 
@@ -57,16 +75,16 @@ export type ZatcaSettings = Awaited<ReturnType<typeof getZatcaSettings>>;
  * Asked as one question rather than comparing the mode at each call site, because every document
  * — invoice PDF, credit note, till receipt — has to answer it the same way.
  */
-export const isZatcaActive = cache(async (): Promise<boolean> => {
+export const isZatcaActive = perCompany(async (): Promise<boolean> => {
   const { mode } = await getZatcaSettings();
   return mode !== "OFF";
 });
 
 /** All other settings sections, with Decimals converted to numbers for client use. */
-export const getAppSettings = cache(async () => {
+export const getAppSettings = perCompany(async () => {
   const row = await readSingleton(
-    () => db.appSettings.findUnique({ where: { id: SINGLETON_ID } }),
-    () => db.appSettings.create({ data: { id: SINGLETON_ID } }),
+    () => db.appSettings.findFirst({}),
+    () => db.appSettings.create({ data: {} }),
   );
   return {
     ...row,
@@ -81,10 +99,10 @@ export type AppSettings = Awaited<ReturnType<typeof getAppSettings>>;
  * Outgoing email settings, password included — server use only (the mailer). Never hand this row
  * to a client component; use getEmailSettingsView() for that.
  */
-export const getEmailSettings = cache(async () =>
+export const getEmailSettings = perCompany(async () =>
   readSingleton(
-    () => db.emailSettings.findUnique({ where: { id: SINGLETON_ID } }),
-    () => db.emailSettings.create({ data: { id: SINGLETON_ID } }),
+    () => db.emailSettings.findFirst({}),
+    () => db.emailSettings.create({ data: {} }),
   ),
 );
 
@@ -96,7 +114,7 @@ export async function getEmailSettingsView() {
 
 export type EmailSettingsView = Awaited<ReturnType<typeof getEmailSettingsView>>;
 
-export const getPasswordPolicy = cache(async (): Promise<PasswordPolicy> => {
+export const getPasswordPolicy = perCompany(async (): Promise<PasswordPolicy> => {
   const s = await getAppSettings();
   return {
     minLength: s.passwordMinLength,
@@ -105,7 +123,7 @@ export const getPasswordPolicy = cache(async (): Promise<PasswordPolicy> => {
   };
 });
 
-export const getRegionalSettings = cache(async (): Promise<RegionalSettings> => {
+export const getRegionalSettings = perCompany(async (): Promise<RegionalSettings> => {
   const s = await getAppSettings();
   return {
     dateFormat: s.dateFormat as DateFormat,

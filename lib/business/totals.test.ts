@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { calcDeposit, calcLine, calcTotals, round2 } from "./totals";
+import { calcDeposit, calcLine, calcTotals, round2, vatFromGross } from "./totals";
 
 /**
  * The money core.
@@ -186,5 +186,39 @@ describe("calcDeposit", () => {
 
   it("rounds to the halala", () => {
     assert.equal(calcDeposit(99.99, 33.33), 33.33);
+  });
+});
+
+describe("VAT inside an amount already paid", () => {
+  it("splits a receipt into what it was worth and the VAT on it", () => {
+    // 115 paid at 15% is 100 of goods and 15 of tax.
+    assert.deepEqual(vatFromGross(115, 15), { net: 100, vat: 15 });
+  });
+
+  it("leaves an amount alone when no VAT was charged", () => {
+    assert.deepEqual(vatFromGross(250, 0), { net: 250, vat: 0 });
+  });
+
+  it("always adds back to exactly what was paid", () => {
+    /**
+     * The invariant that matters: the figure that left the bank must stay whole. Deriving both
+     * halves independently would leave a halala between them on amounts that do not divide, and
+     * money out would stop matching the bank.
+     */
+    for (const total of [0.01, 1, 7.77, 33.33, 99.99, 100, 1234.56, 9999.95]) {
+      const { net, vat } = vatFromGross(total, 15);
+      assert.equal(round2(net + vat), round2(total), `${total} did not add back`);
+    }
+  });
+
+  it("agrees with the way an invoice line is priced", () => {
+    // The two directions must meet: a net of 100 at 15% invoices at 115, and 115 splits back to 100.
+    const line = calcLine({ quantity: 1, unitPrice: 100, discountPercent: 0, vatRate: 15 });
+    assert.deepEqual(vatFromGross(line.total, 15), { net: 100, vat: 15 });
+  });
+
+  it("treats nonsense as no VAT rather than throwing inside a form", () => {
+    assert.deepEqual(vatFromGross(100, Number.NaN), { net: 100, vat: 0 });
+    assert.deepEqual(vatFromGross(Number.NaN, 15), { net: 0, vat: 0 });
   });
 });

@@ -19,12 +19,13 @@ import { UserFormDialog } from "./user-form-dialog";
 type UserDetailViewProps = {
   user: UserDetail;
   roles: RoleOption[];
+  branches: { id: string; name: string }[];
   passwordPolicy: PasswordPolicy;
   canEdit: boolean;
   canToggle: boolean;
 };
 
-export function UserDetailView({ user, roles, passwordPolicy, canEdit, canToggle }: UserDetailViewProps) {
+export function UserDetailView({ user, roles, branches, passwordPolicy, canEdit, canToggle }: UserDetailViewProps) {
   const router = useRouter();
   const format = useFormat();
   const [editOpen, setEditOpen] = useState(false);
@@ -77,7 +78,8 @@ export function UserDetailView({ user, roles, passwordPolicy, canEdit, canToggle
         </CardContent>
       </Card>
 
-      <UserFormDialog open={editOpen} onOpenChange={setEditOpen} roles={roles} passwordPolicy={passwordPolicy} user={user} />
+      <UserFormDialog
+        branches={branches} open={editOpen} onOpenChange={setEditOpen} roles={roles} passwordPolicy={passwordPolicy} user={user} />
       <ConfirmDialog
         open={toggleOpen}
         onOpenChange={setToggleOpen}

@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Kitchen" };
 
 /** The kitchen display. Refreshes itself, so it can live on a screen above the pass. */
 export default async function KitchenPage() {
-  const auth = await requirePosCapability("KITCHEN", "POS", "view");
+  const auth = await requirePosCapability("KITCHEN", "POS_KITCHEN", "view");
   const branch = await getCurrentBranch();
   const tickets = await listKitchenTickets(branch.id);
 

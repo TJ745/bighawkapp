@@ -8,6 +8,7 @@ import { formDataToObject, parseInput, runAction, type ActionResult } from "@/li
 import { nextDocumentNumber } from "@/lib/business/numbering";
 import { assertCustomerUsable } from "@/lib/business/sales";
 import { parseDateOnly } from "@/lib/dates";
+import { recordAudit } from "@/lib/platform/audit";
 import { deleteStoredFile, DOCUMENT_TYPES, MAX_DOCUMENT_BYTES, storeFile } from "@/lib/storage";
 import { projectSchema } from "@/lib/validation/projects";
 import { ProjectStatus } from "@/lib/generated/prisma/enums";
@@ -60,6 +61,13 @@ export async function createProject(formData: FormData): Promise<ActionResult<{ 
     });
     await storeProjectDocuments(project.id, documentFiles(formData), auth.user.id);
 
+    await recordAudit({
+      auth,
+      action: "project.created",
+      entity: "Project",
+      entityId: project.id,
+      summary: `Project ${project.code} — ${project.name} — created`,
+    });
     revalidate(project.id, input.customerId);
     return { id: project.id };
   });
@@ -68,7 +76,7 @@ export async function createProject(formData: FormData): Promise<ActionResult<{ 
 export async function updateProject(id: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
     const auth = await authorize("PROJECTS", "edit");
-    const existing = await db.project.findUnique({ where: { id }, select: { customerId: true } });
+    const existing = await db.project.findUnique({ where: { id }, select: { code: true, customerId: true } });
     if (!existing) throw new BusinessError("Project not found.");
     const input = parseInput(projectSchema, formDataToObject(formData));
     await assertCustomerUsable(input.customerId);
@@ -94,6 +102,13 @@ export async function updateProject(id: string, formData: FormData): Promise<Act
     });
     await storeProjectDocuments(id, documentFiles(formData), auth.user.id);
 
+    await recordAudit({
+      auth,
+      action: "project.updated",
+      entity: "Project",
+      entityId: id,
+      summary: `Project ${existing.code} — ${input.name} — updated`,
+    });
     revalidate(id, input.customerId);
     if (existing.customerId !== input.customerId) revalidate(undefined, existing.customerId);
   });
@@ -102,12 +117,19 @@ export async function updateProject(id: string, formData: FormData): Promise<Act
 /** Status-only change, for the pickers on the project list and profile. */
 export async function setProjectStatus(id: string, status: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("PROJECTS", "edit");
+    const auth = await authorize("PROJECTS", "edit");
     const value = parseInput(z.enum(ProjectStatus), status);
-    const project = await db.project.findUnique({ where: { id }, select: { customerId: true, status: true } });
+    const project = await db.project.findUnique({ where: { id }, select: { code: true, customerId: true, status: true } });
     if (!project) throw new BusinessError("Project not found.");
     if (project.status === value) return;
     await db.project.update({ where: { id }, data: { status: value } });
+    await recordAudit({
+      auth,
+      action: "project.status_changed",
+      entity: "Project",
+      entityId: id,
+      summary: `Project ${project.code} moved from ${project.status} to ${value}`,
+    });
     revalidate(id, project.customerId);
   });
 }
@@ -120,17 +142,31 @@ export async function uploadProjectDocuments(id: string, formData: FormData): Pr
     const files = documentFiles(formData);
     if (files.length === 0) throw new BusinessError("Choose at least one file to upload.");
     await storeProjectDocuments(id, files, auth.user.id);
+    await recordAudit({
+      auth,
+      action: "project.documents_uploaded",
+      entity: "Project",
+      entityId: id,
+      summary: `${files.length} document${files.length === 1 ? "" : "s"} added to a project`,
+    });
     revalidate(id);
   });
 }
 
 export async function deleteProjectDocument(id: string, documentId: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("PROJECTS", "edit");
+    const auth = await authorize("PROJECTS", "edit");
     const doc = await db.projectDocument.findFirst({ where: { id: documentId, projectId: id } });
     if (!doc) throw new BusinessError("Document not found.");
     await db.projectDocument.delete({ where: { id: documentId } });
     await deleteStoredFile(doc.fileKey);
+    await recordAudit({
+      auth,
+      action: "project.document_deleted",
+      entity: "Project",
+      entityId: id,
+      summary: `Document ${doc.name} removed from a project`,
+    });
     revalidate(id);
   });
 }

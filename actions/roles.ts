@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { BusinessError } from "@/lib/auth/errors";
 import { authorize } from "@/lib/auth/session";
 import { parseInput, runAction, type ActionResult } from "@/lib/actions";
+import { recordAudit } from "@/lib/platform/audit";
 import { roleSchema, type PermissionRowInput } from "@/lib/validation/users";
 
 function toPermissionRows(permissions: PermissionRowInput[]) {
@@ -22,7 +23,7 @@ function toPermissionRows(permissions: PermissionRowInput[]) {
 
 export async function createRole(input: unknown): Promise<ActionResult<{ id: string }>> {
   return runAction(async () => {
-    await authorize("USERS", "create");
+    const auth = await authorize("USERS", "create");
     const data = parseInput(roleSchema, input);
 
     const role = await db.role.create({
@@ -33,6 +34,7 @@ export async function createRole(input: unknown): Promise<ActionResult<{ id: str
       },
     });
 
+    await recordAudit({ auth, action: "role.created", entity: "Role", entityId: role.id, summary: `Role ${data.name} created` });
     revalidatePath("/users/roles");
     return { id: role.id };
   });
@@ -40,7 +42,7 @@ export async function createRole(input: unknown): Promise<ActionResult<{ id: str
 
 export async function updateRole(roleId: string, input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("USERS", "edit");
+    const auth = await authorize("USERS", "edit");
     const role = await db.role.findUnique({ where: { id: roleId }, select: { isSystem: true, name: true } });
     if (!role) throw new BusinessError("Role not found.");
     const data = parseInput(roleSchema, input);
@@ -61,6 +63,13 @@ export async function updateRole(roleId: string, input: unknown): Promise<Action
       }
     });
 
+    await recordAudit({
+      auth,
+      action: "role.updated",
+      entity: "Role",
+      entityId: roleId,
+      summary: `Role ${role.isSystem ? role.name : data.name} and its permissions updated`,
+    });
     revalidatePath("/users/roles");
     revalidatePath(`/users/roles/${roleId}`);
   });
@@ -68,7 +77,7 @@ export async function updateRole(roleId: string, input: unknown): Promise<Action
 
 export async function deleteRole(roleId: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("USERS", "delete");
+    const auth = await authorize("USERS", "delete");
     const role = await db.role.findUnique({
       where: { id: roleId },
       select: { isSystem: true, _count: { select: { users: true } } },
@@ -80,6 +89,7 @@ export async function deleteRole(roleId: string): Promise<ActionResult> {
     }
 
     await db.role.delete({ where: { id: roleId } });
+    await recordAudit({ auth, action: "role.deleted", entity: "Role", entityId: roleId, summary: `Role deleted` });
     revalidatePath("/users/roles");
   });
 }

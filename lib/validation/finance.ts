@@ -15,6 +15,20 @@ export const financeEntrySchema = z.object({
     .transform((v) => (v ? v : null)),
 });
 
+/**
+ * An expense, which may carry VAT the business can reclaim.
+ *
+ * Only expenses, not income: money the business receives is invoiced through Sales, where VAT is
+ * already handled properly. `amount` stays what was **paid** — VAT included — so the rate only
+ * says how much of that figure was tax.
+ */
+export const expenseEntrySchema = financeEntrySchema.extend({
+  vatRate: z.coerce.number({ error: "Enter a VAT rate" }).min(0, "Cannot be negative").max(100, "Cannot be more than 100").default(0),
+});
+
+export type ExpenseEntryFormValues = z.input<typeof expenseEntrySchema>;
+export type ExpenseEntryValues = z.output<typeof expenseEntrySchema>;
+
 export type FinanceEntryFormValues = z.input<typeof financeEntrySchema>;
 export type FinanceEntryValues = z.output<typeof financeEntrySchema>;
 

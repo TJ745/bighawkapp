@@ -48,7 +48,7 @@ export async function createItemCategory(input: unknown): Promise<ActionResult<{
   return runAction(async () => {
     const auth = await authorizeCatalogue("create");
     const data = parseInput(itemCategorySchema, input);
-    const existing = await db.itemCategory.findUnique({ where: { name: data.name }, select: { id: true } });
+    const existing = await db.itemCategory.findFirst({ where: { name: data.name }, select: { id: true } });
     if (existing) throw new BusinessError("A category with this name already exists.");
 
     const category = await db.itemCategory.create({ data });
@@ -65,7 +65,7 @@ export async function updateItemCategory(categoryId: string, input: unknown): Pr
     const data = parseInput(itemCategorySchema, input);
     const current = await db.itemCategory.findUnique({ where: { id: categoryId }, select: { id: true } });
     if (!current) throw new BusinessError("Category not found.");
-    const clash = await db.itemCategory.findUnique({ where: { name: data.name }, select: { id: true } });
+    const clash = await db.itemCategory.findFirst({ where: { name: data.name }, select: { id: true } });
     if (clash && clash.id !== categoryId) throw new BusinessError("A category with this name already exists.");
 
     await db.itemCategory.update({ where: { id: categoryId }, data });
@@ -160,7 +160,7 @@ export async function createItem(formData: FormData): Promise<ActionResult<{ id:
     // A brand-new item has nothing to keep, so anything beyond one variant is an addition.
     await assertVariantsAllowed(input.variants.length, 0);
     if (input.code) {
-      const clash = await db.item.findUnique({ where: { code: input.code }, select: { id: true } });
+      const clash = await db.item.findFirst({ where: { code: input.code }, select: { id: true } });
       if (clash) throw new BusinessError("An item with this code already exists.");
     }
 
@@ -214,7 +214,7 @@ export async function updateItem(itemId: string, formData: FormData): Promise<Ac
     if (!current) throw new BusinessError("Item not found.");
     await assertVariantsAllowed(input.variants.length, await db.itemVariant.count({ where: { itemId } }));
     if (input.code && input.code !== current.code) {
-      const clash = await db.item.findUnique({ where: { code: input.code }, select: { id: true } });
+      const clash = await db.item.findFirst({ where: { code: input.code }, select: { id: true } });
       if (clash && clash.id !== itemId) throw new BusinessError("An item with this code already exists.");
     }
 

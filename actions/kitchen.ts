@@ -19,7 +19,7 @@ function revalidateKitchen() {
 /** Sends the rounds that have not been sent yet. Taking the order is enough to send it. */
 export async function sendOrderToKitchen(input: unknown): Promise<ActionResult<{ round: number; lines: number; saleNumber: string }>> {
   return runAction(async () => {
-    const auth = await authorizePosCapability("KITCHEN", "POS", "create");
+    const auth = await authorizePosCapability("KITCHEN", "POS_KITCHEN", "create");
     const data = parseInput(sendToKitchenSchema, input);
     const branch = await getCurrentBranch();
     const result = await sendToKitchen({
@@ -44,7 +44,7 @@ export async function sendOrderToKitchen(input: unknown): Promise<ActionResult<{
 /** Moves a ticket on: start cooking, ready, served — or cancel it. */
 export async function moveTicket(input: unknown): Promise<ActionResult<{ saleNumber: string; status: string }>> {
   return runAction(async () => {
-    const auth = await authorizePosCapability("KITCHEN", "POS", "edit");
+    const auth = await authorizePosCapability("KITCHEN", "POS_KITCHEN", "edit");
     const data = parseInput(advanceTicketSchema, input);
     const branch = await getCurrentBranch();
     const result = await advanceTicket({
@@ -72,7 +72,7 @@ export async function moveTicket(input: unknown): Promise<ActionResult<{ saleNum
 /** What is still waiting to go to the kitchen on this order — drives the till's button. */
 export async function getKitchenDelta(saleId: string): Promise<ActionResult<{ toSend: number; rounds: number }>> {
   return runAction(async () => {
-    await authorizePosCapability("KITCHEN", "POS", "view");
+    await authorizePosCapability("KITCHEN", "POS_KITCHEN", "view");
     const delta = await kitchenDelta(saleId);
     return { toSend: delta.toSend.length, rounds: delta.rounds };
   });

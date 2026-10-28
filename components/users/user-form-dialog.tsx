@@ -34,6 +34,7 @@ const formSchema = z.object({
   email: z.email("Enter a valid email address").trim(),
   phone: z.string().trim().max(100).optional(),
   roleId: z.string().min(1, "Role is required"),
+  branchId: z.string(),
   password: z.string(),
   isActive: z.boolean(),
 });
@@ -46,6 +47,7 @@ export type UserFormUser = {
   phone: string | null;
   image: string | null;
   roleId: string | null;
+  branchId: string | null;
   isActive: boolean;
   isSuperAdmin: boolean;
 };
@@ -54,11 +56,13 @@ type UserFormDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   roles: RoleOption[];
+  /** Branches a user can be pinned to. Empty disables the choice, as with one branch. */
+  branches: { id: string; name: string }[];
   passwordPolicy: PasswordPolicy;
   user?: UserFormUser;
 };
 
-export function UserFormDialog({ open, onOpenChange, roles, passwordPolicy, user }: UserFormDialogProps) {
+export function UserFormDialog({ open, onOpenChange, roles, branches, passwordPolicy, user }: UserFormDialogProps) {
   const [submitting, setSubmitting] = useState(false);
   const isEdit = Boolean(user);
 
@@ -75,6 +79,7 @@ export function UserFormDialog({ open, onOpenChange, roles, passwordPolicy, user
         {open ? (
           <UserForm
             roles={roles}
+            branches={branches}
             passwordPolicy={passwordPolicy}
             user={user}
             onClose={() => onOpenChange(false)}
@@ -87,6 +92,7 @@ export function UserFormDialog({ open, onOpenChange, roles, passwordPolicy, user
 }
 
 type UserFormProps = {
+  branches: { id: string; name: string }[];
   roles: RoleOption[];
   passwordPolicy: PasswordPolicy;
   user?: UserFormUser;
@@ -94,7 +100,7 @@ type UserFormProps = {
   onSubmittingChange: (submitting: boolean) => void;
 };
 
-function UserForm({ roles, passwordPolicy, user, onClose, onSubmittingChange }: UserFormProps) {
+function UserForm({ roles, branches, passwordPolicy, user, onClose, onSubmittingChange }: UserFormProps) {
   const router = useRouter();
   const isEdit = Boolean(user);
   const lockedAccount = Boolean(user?.isSuperAdmin);
@@ -119,12 +125,17 @@ function UserForm({ roles, passwordPolicy, user, onClose, onSubmittingChange }: 
       email: user?.email ?? "",
       phone: user?.phone ?? "",
       roleId: user?.roleId ?? (user?.isSuperAdmin ? "super-admin" : ""),
+      // "all" is the sentinel for every branch; an empty value is not selectable in a Select.
+      branchId: user?.branchId ?? "all",
       password: "",
       isActive: user?.isActive ?? true,
     },
   });
   const { errors, isSubmitting } = form.formState;
-  const [watchedName, watchedRoleId, watchedActive] = useWatch({ control: form.control, name: ["name", "roleId", "isActive"] });
+  const [watchedName, watchedRoleId, watchedBranchId, watchedActive] = useWatch({
+    control: form.control,
+    name: ["name", "roleId", "branchId", "isActive"],
+  });
 
   // Object URL for previewing a newly selected photo; revoked when it changes or on unmount.
   const preview = useMemo(() => (photo ? URL.createObjectURL(photo) : null), [photo]);
@@ -143,6 +154,7 @@ function UserForm({ roles, passwordPolicy, user, onClose, onSubmittingChange }: 
       formData.set("email", values.email);
       formData.set("phone", values.phone ?? "");
       formData.set("roleId", values.roleId);
+      formData.set("branchId", values.branchId === "all" ? "" : values.branchId);
       formData.set("password", values.password);
       formData.set("isActive", String(values.isActive));
       if (photo) formData.set("photo", photo);
@@ -231,6 +243,27 @@ function UserForm({ roles, passwordPolicy, user, onClose, onSubmittingChange }: 
                 {roles.map((role) => (
                   <SelectItem key={role.id} value={role.id}>
                     {role.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
+        ) : null}
+        {!lockedAccount && branches.length > 1 ? (
+          <FormField
+            label="Branch"
+            htmlFor="user-branch"
+            description="Where this person works. Every branch suits an owner or a manager who covers several."
+          >
+            <Select value={watchedBranchId} onValueChange={(v) => form.setValue("branchId", v, { shouldValidate: true })}>
+              <SelectTrigger id="user-branch" className="w-full">
+                <SelectValue placeholder="Every branch" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Every branch</SelectItem>
+                {branches.map((branch) => (
+                  <SelectItem key={branch.id} value={branch.id}>
+                    {branch.name}
                   </SelectItem>
                 ))}
               </SelectContent>

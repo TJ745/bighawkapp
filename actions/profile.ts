@@ -9,6 +9,7 @@ import { BusinessError } from "@/lib/auth/errors";
 import { authorizeSignedIn } from "@/lib/auth/session";
 import { formDataToObject, parseInput, runAction, type ActionResult } from "@/lib/actions";
 import { getPasswordPolicy } from "@/lib/data/settings";
+import { recordAudit } from "@/lib/platform/audit";
 import { deleteStoredFile, fileFromFormData, IMAGE_TYPES, MAX_IMAGE_BYTES, storeFile } from "@/lib/storage";
 import { changePasswordSchema, profileSchema } from "@/lib/validation/profile";
 
@@ -21,7 +22,8 @@ function keyFromUrl(url: string | null) {
 /** Everyone may edit their own name, phone and photo — no USERS permission involved. */
 export async function updateOwnProfile(formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    const { user } = await authorizeSignedIn();
+    const ctx = await authorizeSignedIn();
+    const { user } = ctx;
     const raw = formDataToObject(formData);
     const input = parseInput(profileSchema, raw);
 
@@ -43,6 +45,13 @@ export async function updateOwnProfile(formData: FormData): Promise<ActionResult
       if (oldKey) await deleteStoredFile(oldKey);
     }
 
+    await recordAudit({
+      auth: ctx,
+      action: "user.profile_updated",
+      entity: "User",
+      entityId: user.id,
+      summary: `${input.name} updated their own profile`,
+    });
     revalidatePath("/profile");
     revalidatePath("/users");
     revalidatePath(`/users/${user.id}`);
@@ -57,7 +66,7 @@ export async function updateOwnProfile(formData: FormData): Promise<ActionResult
  */
 export async function changeOwnPassword(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorizeSignedIn();
+    const ctx = await authorizeSignedIn();
     const values = parseInput(changePasswordSchema(await getPasswordPolicy()), input);
     try {
       await auth.api.changePassword({
@@ -68,5 +77,14 @@ export async function changeOwnPassword(input: unknown): Promise<ActionResult> {
       if (error instanceof APIError) throw new BusinessError("Your current password is not correct.");
       throw error;
     }
+    // Worth recording even though nobody else can do it: a password change is the event somebody
+    // looks for after an account has been misused, and "when did it change" is the question.
+    await recordAudit({
+      auth: ctx,
+      action: "user.password_changed",
+      entity: "User",
+      entityId: ctx.user.id,
+      summary: `${ctx.user.name} changed their own password`,
+    });
   });
 }

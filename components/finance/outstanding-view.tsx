@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Eye, Mail, MoreHorizontal, Wallet } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -13,6 +14,7 @@ import { Combobox } from "@/components/shared/combobox";
 import { DateRangeFilter } from "@/components/shared/date-range-filter";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatCards } from "@/components/shared/stat-cards";
+import { AGING_BUCKETS, AGING_LABELS, ageDocuments } from "@/lib/business/aging";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { useUrlFilters } from "@/components/shared/use-url-filters";
 import { useFormat } from "@/components/providers/format-provider";
@@ -70,6 +72,14 @@ export function OutstandingView({ kind, docs, parties, partyOptions, accounts, t
 
   const totalOutstanding = docs.reduce((sum, d) => sum + d.remaining, 0);
   const totalOverdue = docs.filter((d) => d.status === "OVERDUE").reduce((sum, d) => sum + d.remaining, 0);
+  /**
+   * How old the money is, not just how much of it there is. Worked out from the same rows the
+   * table below shows, so the buckets and the list can never disagree.
+   */
+  const aging = ageDocuments(
+    docs.map((d) => ({ dueDate: d.dueDate.toISOString().slice(0, 10), remaining: d.remaining })),
+    today,
+  );
 
   return (
     <div className="space-y-6">
@@ -77,9 +87,43 @@ export function OutstandingView({ kind, docs, parties, partyOptions, accounts, t
         stats={[
           { label: isReceivable ? "Total owed to us" : "Total we owe", value: totalOutstanding, hint: "For the current filters" },
           { label: "Overdue", value: totalOverdue, tone: totalOverdue > 0 ? "danger" : "default" },
-          { label: `${partyLabel}s with balance`, value: parties.length, hint: `${docs.filter((d) => d.remaining > 0).length} open ${docLabel.toLowerCase()}s` },
+          {
+            label: `${partyLabel}s with balance`,
+            value: parties.length,
+            as: "number",
+            hint: `${docs.filter((d) => d.remaining > 0).length} open ${docLabel.toLowerCase()}s`,
+          },
         ]}
       />
+
+      {aging.total > 0 ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">How old it is</CardTitle>
+            <CardDescription>
+              {isReceivable
+                ? "Chasing the oldest first is usually what gets paid."
+                : "What is already late, and how late, before anybody rings."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              {AGING_BUCKETS.map((bucket) => (
+                <div key={bucket} className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">{AGING_LABELS[bucket]}</p>
+                  <p
+                    className={`mt-1 text-lg font-semibold tabular-nums ${
+                      aging[bucket] > 0 && bucket === "d90_plus" ? "text-destructive" : ""
+                    }`}
+                  >
+                    {format.money(aging[bucket])}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="w-56">

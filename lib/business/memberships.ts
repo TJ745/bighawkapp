@@ -1,8 +1,7 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { BusinessError } from "@/lib/auth/errors";
 import { num } from "@/lib/decimal";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import { round2 } from "./totals";
 
 /**
@@ -100,7 +99,7 @@ export function applyBenefit(benefit: MemberBenefit, line: { variantId: string; 
 
 /** Records the sessions a sold line took, so they can be put back if the sale is undone. */
 export async function consumeMembership(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: { membershipId: string; saleItemId: string; name: string; sessions: number },
 ) {
   if (input.sessions <= 0) return;
@@ -118,7 +117,7 @@ export async function consumeMembership(
  * give back more than the line took. The row stays with what was given back on it, because "used
  * then returned" is a different story from "never used".
  */
-export async function returnMembershipUse(tx: Prisma.TransactionClient, saleItemId: string, portion = 1) {
+export async function returnMembershipUse(tx: Tx, saleItemId: string, portion = 1) {
   if (portion <= 0) return;
   const use = await tx.membershipUse.findUnique({ where: { saleItemId } });
   if (!use) return;
@@ -154,7 +153,7 @@ export async function getPlansForVariants(variantIds: string[]): Promise<Map<str
  * than throwing away the remaining days — which is what a customer renewing early expects.
  */
 export async function activateMembership(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: { plan: PlanForSale; customerId: string; branchId: string; saleId: string; today: string; price: number; quantity: number },
 ) {
   const day = new Date(`${input.today}T00:00:00.000Z`);

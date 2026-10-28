@@ -1,7 +1,6 @@
 import "server-only";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import { BusinessError } from "@/lib/auth/errors";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { num } from "@/lib/decimal";
 import { today } from "@/lib/data/sales";
 import { derivePurchaseStatus } from "./procurement-status";
@@ -25,14 +24,20 @@ export async function assertOptionalLinks(customerId: string | null, projectId: 
 }
 
 /** Recomputes and stores paidTotal + status from the purchase's payments. The one place status is set. */
-export async function refreshPurchase(tx: Prisma.TransactionClient, id: string) {
+export async function refreshPurchase(tx: Tx, id: string) {
   const p = await tx.purchase.findUniqueOrThrow({
     where: { id },
     select: { receivedAt: true, supplierReference: true, dueDate: true, grandTotal: true },
   });
+  /**
+   * Payments include the negative rows a return produced, so this is the money actually gone.
+   * Returns are counted separately: goods going back settle a purchase with no money moving.
+   */
   const sum = await tx.purchasePayment.aggregate({ where: { purchaseId: id }, _sum: { amount: true } });
   const paidTotal = round2(num(sum._sum.amount));
-  const status = derivePurchaseStatus({ ...p, grandTotal: num(p.grandTotal), paidTotal }, await today());
-  await tx.purchase.update({ where: { id }, data: { paidTotal, status } });
-  return { paidTotal, status };
+  const credited = await tx.purchaseReturn.aggregate({ where: { purchaseId: id, status: "ISSUED" }, _sum: { grandTotal: true } });
+  const creditedTotal = round2(num(credited._sum.grandTotal));
+  const status = derivePurchaseStatus({ ...p, grandTotal: num(p.grandTotal), paidTotal, creditedTotal }, await today());
+  await tx.purchase.update({ where: { id }, data: { paidTotal, creditedTotal, status } });
+  return { paidTotal, creditedTotal, status };
 }

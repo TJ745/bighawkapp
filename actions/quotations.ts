@@ -14,6 +14,7 @@ import { addDays, parseDateOnly } from "@/lib/dates";
 import { renderEmailTemplate, sendEmail } from "@/lib/email/mailer";
 import { renderQuotationPdf } from "@/lib/pdf/sales";
 import { notify } from "@/lib/notifications/notify";
+import { auditMoney as money, recordAudit } from "@/lib/platform/audit";
 import { deleteStoredFile } from "@/lib/storage";
 import { quotationSchema, sendDocumentSchema } from "@/lib/validation/sales";
 import { getFormatters } from "@/lib/settings/formatters";
@@ -63,6 +64,13 @@ export async function createQuotation(formData: FormData): Promise<ActionResult<
     const attachments = await storeAttachments(`quotations/${quotation.id}`, files);
     if (attachments.length) await db.quotationAttachment.createMany({ data: attachments.map((a) => ({ ...a, quotationId: quotation.id })) });
 
+    await recordAudit({
+      auth,
+      action: "sales.quotation_created",
+      entity: "Quotation",
+      entityId: quotation.id,
+      summary: `Quotation ${quotation.number} raised for ${money(totals.grandTotal)}`,
+    });
     revalidate(quotation.id, input.customerId);
     return { id: quotation.id };
   });
@@ -70,7 +78,7 @@ export async function createQuotation(formData: FormData): Promise<ActionResult<
 
 export async function updateQuotation(id: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SALES", "edit");
+    const auth = await authorize("SALES", "edit");
     const existing = await loadEditable(id);
     if (existing.status === "ACCEPTED" || existing.status === "REJECTED") {
       throw new BusinessError("Accepted or rejected quotations cannot be edited.");
@@ -101,17 +109,31 @@ export async function updateQuotation(id: string, formData: FormData): Promise<A
     const attachments = await storeAttachments(`quotations/${id}`, files);
     if (attachments.length) await db.quotationAttachment.createMany({ data: attachments.map((a) => ({ ...a, quotationId: id })) });
 
+    await recordAudit({
+      auth,
+      action: "sales.quotation_updated",
+      entity: "Quotation",
+      entityId: id,
+      summary: `Quotation ${existing.number} edited — now ${money(totals.grandTotal)}, back to draft`,
+    });
     revalidate(id, input.customerId);
   });
 }
 
 export async function deleteQuotationAttachment(id: string, attachmentId: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SALES", "edit");
+    const auth = await authorize("SALES", "edit");
     const attachment = await db.quotationAttachment.findFirst({ where: { id: attachmentId, quotationId: id } });
     if (!attachment) throw new BusinessError("Attachment not found.");
     await db.quotationAttachment.delete({ where: { id: attachmentId } });
     await deleteStoredFile(attachment.fileKey);
+    await recordAudit({
+      auth,
+      action: "sales.quotation_attachment_deleted",
+      entity: "Quotation",
+      entityId: id,
+      summary: `Attachment ${attachment.name} removed from a quotation`,
+    });
     revalidate(id);
   });
 }
@@ -136,7 +158,7 @@ export async function prepareQuotationEmail(id: string): Promise<ActionResult<{ 
 
 export async function sendQuotation(id: string, input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SALES", "edit");
+    const auth = await authorize("SALES", "edit");
     const message = parseInput(sendDocumentSchema, input);
     const q = await getQuotation(id);
     if (!q) throw new BusinessError("Quotation not found.");
@@ -151,6 +173,13 @@ export async function sendQuotation(id: string, input: unknown): Promise<ActionR
       attachments: [{ filename: `${q.number}.pdf`, content: pdf, contentType: "application/pdf" }],
     });
     await db.quotation.update({ where: { id }, data: { status: "SENT", sentAt: new Date() } });
+    await recordAudit({
+      auth,
+      action: "sales.quotation_sent",
+      entity: "Quotation",
+      entityId: id,
+      summary: `Quotation ${q.number} emailed to ${message.to}`,
+    });
     revalidate(id, q.customerId);
   });
 }
@@ -158,21 +187,35 @@ export async function sendQuotation(id: string, input: unknown): Promise<ActionR
 /** For customers without email: the PDF was printed/handed over, so the quotation counts as sent. */
 export async function markQuotationSent(id: string): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SALES", "edit");
+    const auth = await authorize("SALES", "edit");
     const q = await loadEditable(id);
     if (q.status !== "DRAFT" && q.status !== "EXPIRED") throw new BusinessError("Only draft quotations can be marked as sent.");
     await db.quotation.update({ where: { id }, data: { status: "SENT", sentAt: new Date() } });
+    await recordAudit({
+      auth,
+      action: "sales.quotation_issued",
+      entity: "Quotation",
+      entityId: id,
+      summary: `Quotation ${q.number} marked as sent by hand`,
+    });
     revalidate(id, q.customerId);
   });
 }
 
 export async function decideQuotation(id: string, decision: "ACCEPTED" | "REJECTED"): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("SALES", "edit");
+    const auth = await authorize("SALES", "edit");
     if (decision !== "ACCEPTED" && decision !== "REJECTED") throw new BusinessError("Invalid decision.");
     const q = await loadEditable(id);
     if (q.status === "ACCEPTED" || q.status === "REJECTED") throw new BusinessError("This quotation has already been decided.");
     await db.quotation.update({ where: { id }, data: { status: decision, decidedAt: new Date() } });
+    await recordAudit({
+      auth,
+      action: decision === "ACCEPTED" ? "sales.quotation_accepted" : "sales.quotation_rejected",
+      entity: "Quotation",
+      entityId: id,
+      summary: `Quotation ${q.number} ${decision === "ACCEPTED" ? "accepted" : "rejected"} by the customer`,
+    });
     if (decision === "ACCEPTED") {
       const [customer, f] = await Promise.all([db.customer.findUnique({ where: { id: q.customerId }, select: { name: true } }), getFormatters()]);
       await notify({
@@ -222,6 +265,13 @@ export async function convertQuotationToInvoice(id: string): Promise<ActionResul
       });
     });
 
+    await recordAudit({
+      auth,
+      action: "sales.quotation_converted",
+      entity: "Invoice",
+      entityId: invoice.id,
+      summary: `Quotation ${q.number} converted to invoice ${invoice.number}`,
+    });
     revalidate(id, q.customerId);
     revalidatePath("/sales/invoices");
     return { invoiceId: invoice.id };

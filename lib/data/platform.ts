@@ -2,10 +2,12 @@ import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { db } from "@/lib/db";
+import { BusinessError } from "@/lib/auth/errors";
 import { Prisma } from "@/lib/generated/prisma/client";
 import type { AppModule, PosBusinessType } from "@/lib/generated/prisma/enums";
 import { ALL_MODULES } from "@/lib/platform/modules";
 import { getCompanySettings } from "@/lib/data/settings";
+import { allowedBranchIds } from "@/lib/auth/current-user";
 
 /**
  * Reads for the platform layer: which modules are on, the company's branches and their POS
@@ -87,7 +89,29 @@ export const listBranches = cache(async () => {
 
 export type BranchRow = Awaited<ReturnType<typeof listBranches>>[number];
 
+/**
+ * The active branches the signed-in user may work in.
+ *
+ * Every branch picker in the app reads this — the header switcher, the stock screen, the receive
+ * dialog — so pinning someone to a branch narrows all of them from one place. Settings → Branches
+ * and Settings → Modules deliberately keep using `listBranches()`: administering branches is not
+ * the same as working in one.
+ */
 export async function listActiveBranches() {
+  const active = (await listBranches()).filter((b) => b.isActive);
+  const allowed = await allowedBranchIds();
+  return allowed === null ? active : active.filter((b) => allowed.includes(b.id));
+}
+
+/**
+ * Every active branch, whoever is asking — for choosing where stock is being **sent**.
+ *
+ * Working at a branch and sending stock to one are different things: a storekeeper pinned to the
+ * warehouse must still be able to send goods to a shop they never set foot in. Scoping this list
+ * the way `listActiveBranches()` is scoped would quietly make transfers impossible for exactly the
+ * people who make them.
+ */
+export async function listTransferDestinations() {
   return (await listBranches()).filter((b) => b.isActive);
 }
 
@@ -105,13 +129,45 @@ export async function getDefaultBranch(): Promise<BranchRow> {
  * active, otherwise the default. POS registers, shifts and sales will all be stamped with this.
  */
 export const getCurrentBranch = cache(async (): Promise<BranchRow> => {
+  const branches = await listBranches();
+  const allowed = await allowedBranchIds();
+  const mayUse = (branch: BranchRow) => branch.isActive && (allowed === null || allowed.includes(branch.id));
+
+  /**
+   * The cookie is a request, not permission. A user pinned to one branch who carries another
+   * branch's cookie — set before they were pinned, or by hand — is given their own branch, not
+   * the one they asked for.
+   */
   const chosen = (await cookies()).get(BRANCH_COOKIE)?.value;
   if (chosen) {
-    const branch = (await listBranches()).find((b) => b.id === chosen && b.isActive);
+    const branch = branches.find((b) => b.id === chosen && mayUse(b));
     if (branch) return branch;
+  }
+
+  // A pinned user falls back to their own branch rather than the company default.
+  if (allowed !== null) {
+    const own = branches.find((b) => allowed.includes(b.id) && b.isActive);
+    if (own) return own;
   }
   return getDefaultBranch();
 });
+
+/**
+ * Refuses a branch the signed-in user may not work in.
+ *
+ * For actions that take a branch **from the client** — a stock count, a transfer, a goods receipt.
+ * Narrowing the picker is not the check: the id arrives in a request that anyone can shape.
+ */
+export async function assertBranchAllowed(branchId: string): Promise<BranchRow> {
+  const branch = await getBranch(branchId);
+  if (!branch) throw new BusinessError("That branch no longer exists.");
+  const allowed = await allowedBranchIds();
+  if (allowed !== null && !allowed.includes(branch.id)) {
+    throw new BusinessError(`You do not work at ${branch.name}, so you cannot record anything against it.`);
+  }
+  if (!branch.isActive) throw new BusinessError(`${branch.name} is not in use.`);
+  return branch;
+}
 
 /** POS configuration for a branch, created with defaults the first time it is needed. */
 export async function getPosConfiguration(branchId: string) {

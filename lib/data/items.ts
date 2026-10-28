@@ -4,6 +4,7 @@ import type { Prisma } from "@/lib/generated/prisma/client";
 import type { ItemKind } from "@/lib/generated/prisma/enums";
 import { getStockLevels, round3 } from "@/lib/business/inventory";
 import { num } from "@/lib/decimal";
+import { round2 } from "@/lib/business/totals";
 import { paginate, type ListParams } from "@/lib/list-params";
 
 /** Catalogue reads. Stock always comes from one branch — the one the user is working in. */
@@ -226,3 +227,36 @@ export async function listItemOptions(kind?: ItemKind) {
     },
   });
 }
+
+/**
+ * What the stock on hand is worth, at cost.
+ *
+ * Its own query rather than a total of the table above, because that table is paginated: summing
+ * twenty-five rows and calling it the stock value would be wrong by everything on page two.
+ *
+ * Valued at **cost**, never at the sale price — this is what the business paid for what it is
+ * holding, which is the figure an accountant asks for. The variant's own cost wins over the
+ * item's, exactly as it does when a sale is priced, so a line's margin and this total agree.
+ */
+export async function getStockValuation(branchId: string) {
+  const levels = await db.stockLevel.findMany({
+    where: { branchId, quantity: { gt: 0 }, variant: { isActive: true, item: { trackStock: true, isActive: true } } },
+    select: {
+      quantity: true,
+      variant: { select: { costPrice: true, item: { select: { costPrice: true } } } },
+    },
+  });
+
+  let value = 0;
+  let units = 0;
+  for (const level of levels) {
+    const quantity = num(level.quantity);
+    const unitCost = level.variant.costPrice === null ? num(level.variant.item.costPrice) : num(level.variant.costPrice);
+    value = round2(value + quantity * unitCost);
+    units = round3(units + quantity);
+  }
+  // `lines` is how many different things are on the shelf; `units` is how much of them there is.
+  return { value, units, lines: levels.length };
+}
+
+export type StockValuation = Awaited<ReturnType<typeof getStockValuation>>;

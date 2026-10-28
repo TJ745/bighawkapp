@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { authClient } from "@/lib/auth/auth-client";
+import { clearTillCache } from "@/lib/offline/service-worker";
 import { getInitials } from "@/lib/format";
 import type { AuthUser } from "@/lib/auth/session";
 
@@ -21,6 +22,12 @@ export function UserMenu({ user }: { user: AuthUser }) {
   const router = useRouter();
 
   async function handleSignOut() {
+    /**
+     * Before the session goes, not after: the till keeps a copy of the register page so it can
+     * reopen without a connection, and that copy holds whatever this cashier could see. A till
+     * is a shared device. Queued sales are deliberately left alone — that is money.
+     */
+    await clearTillCache();
     await authClient.signOut();
     router.replace("/login");
     router.refresh();

@@ -41,7 +41,7 @@ function revalidateTables() {
 export async function saveOrder(input: unknown): Promise<ActionResult<{ id: string; number: string; grandTotal: number }>> {
   return runAction(async () => {
     const data = parseInput(saveOrderSchema, input);
-    const auth = await authorizePosCapability(data.tabName && !data.tableId ? "TABS" : "TABLES", "POS", "create");
+    const auth = await authorizePosCapability(data.tabName && !data.tableId ? "TABS" : "TABLES", "POS_ORDERS", "create");
     const [branch, settings] = await Promise.all([getCurrentBranch(), getAppSettings()]);
     if (branch.posConfig && !branch.posConfig.isActive) throw new BusinessError("POS is switched off for this branch.");
     if (!data.saleId && !data.tableId && !data.tabName) throw new BusinessError("Choose a table, or give the tab a name.");
@@ -117,7 +117,7 @@ export async function payOrder(
     const data = parseInput(payOrderSchema, input);
     // Which capability applies depends on what kind of bill this is, so the bill is read first.
     const sale = await db.posSale.findUnique({ where: { id: data.saleId }, select: { tableId: true } });
-    const auth = await authorizePosCapability(sale && sale.tableId === null ? "TABS" : "TABLES", "POS", "create");
+    const auth = await authorizePosCapability(sale && sale.tableId === null ? "TABS" : "TABLES", "POS_ORDERS", "create");
     const [branch, todayDate] = await Promise.all([getCurrentBranch(), today()]);
     const shift = data.registerId ? await getOpenShift(data.registerId) : null;
 
@@ -150,7 +150,7 @@ export async function payOrder(
 
 export async function moveOrder(input: unknown): Promise<ActionResult<{ number: string; to: string }>> {
   return runAction(async () => {
-    const auth = await authorizePosCapability("TABLES", "POS", "edit");
+    const auth = await authorizePosCapability("TABLES", "POS_ORDERS", "edit");
     const data = parseInput(transferOrderSchema, input);
     const branch = await getCurrentBranch();
     const result = await transferOrder({ saleId: data.saleId, tableId: data.tableId, branchId: branch.id });
@@ -169,7 +169,7 @@ export async function moveOrder(input: unknown): Promise<ActionResult<{ number: 
 
 export async function joinOrders(input: unknown): Promise<ActionResult<{ number: string; grandTotal: number }>> {
   return runAction(async () => {
-    const auth = await authorizePosCapability("TABLES", "POS", "edit");
+    const auth = await authorizePosCapability("TABLES", "POS_ORDERS", "edit");
     const data = parseInput(mergeOrdersSchema, input);
     const branch = await getCurrentBranch();
     const result = await mergeOrders({ sourceId: data.sourceId, targetId: data.targetId, branchId: branch.id });
@@ -189,7 +189,7 @@ export async function joinOrders(input: unknown): Promise<ActionResult<{ number:
 
 export async function divideOrder(input: unknown): Promise<ActionResult<{ splitNumber: string; splitTotal: number; originalTotal: number }>> {
   return runAction(async () => {
-    const auth = await authorizePosCapability("TABLES", "POS", "edit");
+    const auth = await authorizePosCapability("TABLES", "POS_ORDERS", "edit");
     const data = parseInput(splitOrderSchema, input);
     const [branch, todayDate] = await Promise.all([getCurrentBranch(), today()]);
     const result = await splitOrder({

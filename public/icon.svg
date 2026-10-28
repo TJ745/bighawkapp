@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="BigHawk">
+  <!-- The fallback mark, used only when a company has not uploaded a logo of its own. -->
+  <rect width="512" height="512" rx="112" fill="#0f766e"/>
+  <path d="M256 118c-18 0-34 9-43 24l-91 152c-9 15-9 33 0 48s25 24 43 24h182c18 0 34-9 43-24s9-33 0-48l-91-152c-9-15-25-24-43-24Zm0 72 76 127H180l76-127Z" fill="#ffffff"/>
+</svg>

@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
+import { currentCompanyUsers } from "@/lib/platform/user-scope";
 import { Prisma } from "@/lib/generated/prisma/client";
 import type { NotificationType, PermissionModule } from "@/lib/generated/prisma/enums";
 import { getNotificationSettings } from "@/lib/data/settings";
@@ -30,6 +31,9 @@ async function usersForModules(modules: PermissionModule[]) {
   return db.user.findMany({
     where: {
       isActive: true,
+      // Scoped by hand — `User` is outside the tenant filter, and an unscoped recipient list
+      // would email another customer's staff about this company's invoices.
+      ...(await currentCompanyUsers()),
       OR: [{ isSuperAdmin: true }, { role: { permissions: { some: { module: { in: modules }, canView: true } } } }],
     },
     select: { id: true, email: true, name: true },
@@ -57,7 +61,10 @@ export async function notify(input: NotificationInput): Promise<void> {
 
     const recipients =
       setting.recipientUserIds.length > 0
-        ? await db.user.findMany({ where: { id: { in: setting.recipientUserIds }, isActive: true }, select: { id: true, email: true, name: true } })
+        ? await db.user.findMany({
+            where: { id: { in: setting.recipientUserIds }, isActive: true, ...(await currentCompanyUsers()) },
+            select: { id: true, email: true, name: true },
+          })
         : await usersForModules(MODULE_FOR_TYPE[input.type]);
     if (recipients.length === 0) return;
 

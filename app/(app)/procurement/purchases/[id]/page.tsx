@@ -3,9 +3,11 @@ import { notFound } from "next/navigation";
 import { PurchaseDetailView } from "@/components/procurement/purchase-detail";
 import { requirePermission } from "@/lib/auth/session";
 import { getReceivableLines } from "@/lib/business/receiving";
+import { getReturnableLines } from "@/lib/business/purchase-returns";
 import { getCurrentBranch, listActiveBranches } from "@/lib/data/platform";
 import { getPurchase } from "@/lib/data/procurement";
 import { listReceiptsForPurchase, listReceivableItems } from "@/lib/data/receiving";
+import { listReturnsForPurchase } from "@/lib/data/purchase-returns";
 import { today } from "@/lib/data/sales";
 import { getAppSettings, listPaymentAccounts } from "@/lib/data/settings";
 
@@ -19,7 +21,7 @@ export default async function PurchasePage({ params }: PageProps<"/procurement/p
    * Without both, the purchase still works — there is simply no shelf to put it on.
    */
   const canReceive = auth.hasModule("POS") && auth.can("PROCUREMENT", "edit") && auth.can("INVENTORY", "edit");
-  const [purchase, settings, accounts, todayDate, receivable, receipts, branches, currentBranch] = await Promise.all([
+  const [purchase, settings, accounts, todayDate, receivable, receipts, branches, currentBranch, returnable, returns] = await Promise.all([
     getPurchase(id),
     getAppSettings(),
     listPaymentAccounts({ activeOnly: true }),
@@ -28,6 +30,10 @@ export default async function PurchasePage({ params }: PageProps<"/procurement/p
     canReceive ? listReceiptsForPurchase(id) : Promise.resolve([]),
     canReceive ? listActiveBranches() : Promise.resolve([]),
     canReceive ? getCurrentBranch() : Promise.resolve(null),
+    // Sending goods back needs the same two modules receiving does: the paperwork is
+    // Procurement's, the shelf belongs to POS.
+    canReceive ? getReturnableLines(id) : Promise.resolve([]),
+    canReceive ? listReturnsForPurchase(id) : Promise.resolve([]),
   ]);
   if (!purchase) notFound();
   const receivableItems = canReceive && currentBranch ? await listReceivableItems(currentBranch.id) : [];
@@ -44,6 +50,9 @@ export default async function PurchasePage({ params }: PageProps<"/procurement/p
       branches={branches.map((branch) => ({ id: branch.id, name: branch.name }))}
       currentBranchId={currentBranch?.id ?? null}
       receipts={receipts}
+      canReturn={canReceive}
+      returnable={returnable.filter((line) => line.returnableQuantity > 0)}
+      returns={returns}
     />
   );
 }

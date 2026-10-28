@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { QuotaNote } from "@/components/shared/quota-note";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -34,9 +35,16 @@ export type BranchListItem = {
   posType: PosBusinessType | null;
 };
 
-type Props = { branches: BranchListItem[]; canCreate: boolean; canEdit: boolean; posEnabled: boolean };
+type Props = {
+  branches: BranchListItem[];
+  canCreate: boolean;
+  canEdit: boolean;
+  posEnabled: boolean;
+  /** Branches open against branches bought, shown beside the button that opens one. */
+  quota: { used: number; limit: number; remaining: number };
+};
 
-export function BranchesForm({ branches, canCreate, canEdit, posEnabled }: Props) {
+export function BranchesForm({ branches, canCreate, canEdit, posEnabled, quota }: Props) {
   const router = useRouter();
   const [editing, setEditing] = useState<BranchListItem | null>(null);
   const [open, setOpen] = useState(false);
@@ -72,8 +80,9 @@ export function BranchesForm({ branches, canCreate, canEdit, posEnabled }: Props
           <CardDescription>
             Your locations. Each branch can run its own POS industry, and POS registers, shifts and sales are recorded against a branch.
           </CardDescription>
+          <QuotaNote used={quota.used} limit={quota.limit} noun="branches" />
           {canCreate ? (
-            <Button onClick={openCreate} className="row-start-1 justify-self-end">
+            <Button onClick={openCreate} className="row-start-1 justify-self-end" disabled={quota.remaining === 0}>
               <Plus />
               New Branch
             </Button>

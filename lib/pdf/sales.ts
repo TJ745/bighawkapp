@@ -1,5 +1,7 @@
 import "server-only";
 import type { CreditNoteDetail } from "@/lib/data/credit-notes";
+import type { CustomerStatement } from "@/lib/data/statements";
+import { AGING_BUCKETS, AGING_LABELS, type Aging } from "@/lib/business/aging";
 import type { DocumentCustomer, DocumentItem, InvoiceDetail, QuotationDetail } from "@/lib/data/sales";
 import { getFormatters } from "@/lib/settings/formatters";
 import { zatcaStamp } from "@/lib/data/zatca";
@@ -161,4 +163,64 @@ export async function renderCreditNotePdf(note: CreditNoteDetail): Promise<Buffe
     sections,
   };
   return renderDocumentPdf(branding, data);
+}
+
+/**
+ * A customer statement — the document a business sends when it wants paying.
+ *
+ * It reuses the ordinary document table with its columns renamed, so the layout, the branding
+ * and the page breaks are the ones every other document already has. **No ZATCA QR:** a
+ * statement is not a tax invoice, it is a summary of ones already issued, and stamping it would
+ * claim it was something it is not.
+ */
+export async function renderCustomerStatementPdf(statement: CustomerStatement): Promise<Buffer> {
+  const [branding, f] = await Promise.all([getPdfBranding(), getFormatters()]);
+
+  const rows = [
+    {
+      description: "Balance brought forward",
+      quantity: statement.range.from ? f.date(new Date(`${statement.range.from}T00:00:00.000Z`)) : "",
+      unitPrice: "",
+      discount: "",
+      vat: "",
+      total: f.number(statement.openingBalance),
+    },
+    ...statement.rows.map((row) => ({
+      description: row.description,
+      quantity: f.date(row.date),
+      // Charges in one column, anything that reduces the debt in the other, as a ledger reads.
+      unitPrice: row.amount > 0 ? f.number(row.amount) : "",
+      discount: row.amount < 0 ? f.number(-row.amount) : "",
+      vat: "",
+      total: f.number(row.balance),
+    })),
+  ];
+
+  const owing = statement.closingBalance;
+  const data: PdfDocumentData = {
+    title: "STATEMENT OF ACCOUNT",
+    number: f.date(new Date()),
+    meta: [
+      ...(statement.range.from ? [{ label: "From", value: f.date(new Date(`${statement.range.from}T00:00:00.000Z`)) }] : []),
+      ...(statement.range.to ? [{ label: "To", value: f.date(new Date(`${statement.range.to}T00:00:00.000Z`)) }] : []),
+    ],
+    partyLabel: "Statement for",
+    partyLines: partyLines(statement.customer),
+    columns: { description: "Detail", quantity: "Date", unitPrice: "Charged", discount: "Paid / credited", vat: "", total: "Balance" },
+    items: rows,
+    totals: [
+      { label: "Charged this period", value: f.money(statement.charged) },
+      { label: "Paid this period", value: `- ${f.money(statement.paid)}` },
+      ...(statement.credited > 0 ? [{ label: "Credited this period", value: `- ${f.money(statement.credited)}` }] : []),
+      { label: owing >= 0 ? "Balance due" : "In credit", value: f.money(Math.abs(owing)), emphasis: true },
+    ],
+    sections: owing > 0 ? [{ title: "How old this balance is", lines: agingLines(statement.aging, f) }] : [],
+    statusNote: owing <= 0 ? "NOTHING OUTSTANDING" : undefined,
+  };
+  return renderDocumentPdf(branding, data);
+}
+
+/** The aging buckets as sentences, so the statement says how late the money is as well as how much. */
+function agingLines(aging: Aging, f: Formatters) {
+  return AGING_BUCKETS.filter((bucket) => aging[bucket] > 0).map((bucket) => `${AGING_LABELS[bucket]}: ${f.money(aging[bucket])}`);
 }

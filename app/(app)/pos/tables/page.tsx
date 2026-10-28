@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: "Tables" };
 
 /** The floor: free and occupied tables, with what each party owes so far. */
 export default async function TablesPage() {
-  const auth = await requirePosCapability("TABLES", "POS", "view");
+  const auth = await requirePosCapability("TABLES", "POS_ORDERS", "view");
   const branch = await getCurrentBranch();
   const tables = await listTables(branch.id);
   // The floor only shows kitchen progress where the branch actually has a kitchen.

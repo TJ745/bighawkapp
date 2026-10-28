@@ -49,7 +49,12 @@ const PERMISSION_MODULE_OWNER: Partial<Record<PermissionModule, AppModule>> = {
   PROCUREMENT: "BUSINESS_MANAGEMENT",
   PROJECTS: "BUSINESS_MANAGEMENT",
   FINANCE: "BUSINESS_MANAGEMENT",
+  // The POS side is split by job — till, floor, kitchen, diary — but all of it belongs to the one
+  // product module, so switching POS off still closes every one of them from here.
   POS: "POS",
+  POS_ORDERS: "POS",
+  POS_KITCHEN: "POS",
+  POS_BOOKINGS: "POS",
   INVENTORY: "POS",
 };
 

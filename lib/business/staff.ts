@@ -1,8 +1,7 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { BusinessError } from "@/lib/auth/errors";
 import { num } from "@/lib/decimal";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import { round2 } from "./totals";
 
 /**
@@ -39,7 +38,7 @@ export function commissionOn(lineNet: number, commissionPercent: number) {
 
 /** Records who performed one sold line and what it earned them. */
 export async function recordLineStaff(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: { saleItemId: string; staff: StaffRate; commissionPercent?: number | null; lineNet: number },
 ) {
   const rate = input.commissionPercent === undefined || input.commissionPercent === null ? input.staff.commissionPercent : input.commissionPercent;
@@ -59,7 +58,7 @@ export async function recordLineStaff(
  * is coming back: 1 for a void, returned ÷ sold for a partial return. The row stays, with what was
  * reversed on it, because "earned then returned" is not the same story as "never earned".
  */
-export async function reverseLineCommission(tx: Prisma.TransactionClient, input: { saleItemId: string; portion: number }) {
+export async function reverseLineCommission(tx: Tx, input: { saleItemId: string; portion: number }) {
   if (input.portion <= 0) return;
   const rows = await tx.posSaleItemStaff.findMany({ where: { saleItemId: input.saleItemId } });
   for (const row of rows) {

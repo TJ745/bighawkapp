@@ -18,6 +18,19 @@ import { EntryDialog, type AccountOption } from "./entry-dialog";
 
 type Entry = IncomeEntry | ExpenseEntry;
 
+/** What each row is called. A map rather than a ternary chain, which a sixth kind made unreadable. */
+const ENTRY_LABEL: Record<Entry["kind"], string> = {
+  CUSTOMER_PAYMENT: "Customer payment",
+  CUSTOMER_ADVANCE: "Customer advance",
+  ADVANCE_REFUND: "Advance returned",
+  POS_SALE: "POS sale",
+  OTHER_INCOME: "Other income",
+  SUPPLIER_PAYMENT: "Supplier payment",
+  SUPPLIER_ADVANCE: "Supplier prepayment",
+  ADVANCE_RETURNED: "Prepayment returned",
+  GENERAL_EXPENSE: "General expense",
+};
+
 type Props = {
   kind: "income" | "expense";
   entries: Entry[];
@@ -55,12 +68,14 @@ export function EntriesTable({ kind, entries, categories, accounts, today, canCr
   const total = entries.reduce((sum, e) => sum + e.amount, 0);
   const isDocumentPayment = (e: Entry) => e.kind === "CUSTOMER_PAYMENT" || e.kind === "SUPPLIER_PAYMENT" || e.kind === "POS_SALE";
   /**
-   * An advance is not an entry anyone edits here — it is managed on the customer it belongs to, so
+   * An advance is not an entry anyone edits here — it is managed on the party it belongs to, so
    * the row links there instead of opening a dialog that cannot save it. A type guard rather than a
-   * boolean, so the customer it belongs to is reachable on the narrowed row.
+   * boolean, so the party it belongs to is reachable on the narrowed row.
    */
   const isAdvance = (e: Entry): e is IncomeEntry & { kind: "CUSTOMER_ADVANCE" | "ADVANCE_REFUND" } =>
     e.kind === "CUSTOMER_ADVANCE" || e.kind === "ADVANCE_REFUND";
+  const isPrepayment = (e: Entry): e is ExpenseEntry & { kind: "SUPPLIER_ADVANCE" | "ADVANCE_RETURNED" } =>
+    e.kind === "SUPPLIER_ADVANCE" || e.kind === "ADVANCE_RETURNED";
   const documentHref = (e: Entry) =>
     "invoiceId" in e && e.invoiceId
       ? `/sales/invoices/${e.invoiceId}`
@@ -153,19 +168,7 @@ export function EntriesTable({ kind, entries, categories, accounts, today, canCr
                   <TableCell className="whitespace-nowrap">{format.date(e.date)}</TableCell>
                   <TableCell className="hidden sm:table-cell">
                     <StatusBadge tone={isDocumentPayment(e) ? "info" : "neutral"}>
-                      {e.kind === "CUSTOMER_PAYMENT"
-                        ? "Customer payment"
-                        : e.kind === "CUSTOMER_ADVANCE"
-                        ? "Customer advance"
-                        : e.kind === "ADVANCE_REFUND"
-                        ? "Advance returned"
-                        : e.kind === "POS_SALE"
-                          ? "POS sale"
-                          : e.kind === "OTHER_INCOME"
-                            ? "Other income"
-                            : e.kind === "SUPPLIER_PAYMENT"
-                              ? "Supplier payment"
-                              : "General expense"}
+                      {ENTRY_LABEL[e.kind]}
                     </StatusBadge>
                   </TableCell>
                   {!isIncome ? <TableCell className="hidden text-muted-foreground md:table-cell">{e.category}</TableCell> : null}
@@ -188,6 +191,13 @@ export function EntriesTable({ kind, entries, categories, accounts, today, canCr
                             <Link href={`/customers/${e.customerId ?? ""}`}>
                               <Eye />
                               View customer
+                            </Link>
+                          </DropdownMenuItem>
+                        ) : isPrepayment(e) ? (
+                          <DropdownMenuItem asChild>
+                            <Link href={`/procurement/suppliers/${e.supplierId ?? ""}?tab=advances`}>
+                              <Eye />
+                              View supplier
                             </Link>
                           </DropdownMenuItem>
                         ) : isDocumentPayment(e) ? (

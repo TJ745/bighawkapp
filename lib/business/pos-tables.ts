@@ -1,8 +1,7 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { BusinessError } from "@/lib/auth/errors";
 import { num } from "@/lib/decimal";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import { nextDocumentNumber } from "./numbering";
 import { calcLine, round2 } from "./totals";
 
@@ -18,7 +17,6 @@ import { calcLine, round2 } from "./totals";
  * why these operations are safe to run on them and refused on anything already paid.
  */
 
-type Tx = Prisma.TransactionClient;
 
 /**
  * Recomputes a held order's totals from its stored lines.

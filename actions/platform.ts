@@ -3,11 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { db } from "@/lib/db";
+import { resolveCompanyId } from "@/lib/db/tenant-scope";
 import { BusinessError } from "@/lib/auth/errors";
 import { authorize, authorizeSignedIn, authorizeSuperAdmin } from "@/lib/auth/session";
 import { formDataToObject, parseInput, runAction, type ActionResult } from "@/lib/actions";
 import { BRANCH_COOKIE, getPosConfiguration, listBranches } from "@/lib/data/platform";
 import { recordAudit } from "@/lib/platform/audit";
+import { assertBranchSlotAvailable } from "@/lib/platform/quotas";
 import { moduleLabel } from "@/lib/platform/modules";
 import { posTypeLabel } from "@/lib/platform/pos-types";
 import { branchSchema, moduleToggleSchema, posConfigurationSchema } from "@/lib/validation/platform";
@@ -26,7 +28,7 @@ export async function setModuleEnabled(input: unknown): Promise<ActionResult> {
     const { module, enabled } = parseInput(moduleToggleSchema, input);
 
     await db.moduleSetting.upsert({
-      where: { module },
+      where: { companyId_module: { companyId: await resolveCompanyId(), module } },
       update: { enabled, enabledAt: enabled ? new Date() : null },
       create: { module, enabled, enabledAt: enabled ? new Date() : null },
     });
@@ -78,7 +80,7 @@ export async function savePosConfiguration(input: unknown): Promise<ActionResult
 // --- Branches (Settings permission) ------------------------------------------
 
 async function assertCodeAvailable(code: string, exceptId?: string) {
-  const existing = await db.branch.findUnique({ where: { code }, select: { id: true } });
+  const existing = await db.branch.findFirst({ where: { code }, select: { id: true } });
   if (existing && existing.id !== exceptId) throw new BusinessError("A branch with this code already exists.");
 }
 
@@ -86,6 +88,7 @@ export async function createBranch(formData: FormData): Promise<ActionResult<{ i
   return runAction(async () => {
     const auth = await authorize("SETTINGS", "create");
     const data = parseInput(branchSchema, formDataToObject(formData));
+    await assertBranchSlotAvailable();
     await assertCodeAvailable(data.code);
 
     const isFirst = (await db.branch.count()) === 0;
@@ -101,11 +104,13 @@ export async function updateBranch(branchId: string, formData: FormData): Promis
   return runAction(async () => {
     const auth = await authorize("SETTINGS", "edit");
     const data = parseInput(branchSchema, formDataToObject(formData));
-    const current = await db.branch.findUnique({ where: { id: branchId }, select: { id: true, isDefault: true, name: true } });
+    const current = await db.branch.findUnique({ where: { id: branchId }, select: { id: true, isDefault: true, isActive: true, name: true } });
     if (!current) throw new BusinessError("Branch not found.");
     await assertCodeAvailable(data.code, branchId);
     // The default branch is where unassigned work lands, so it has to stay usable.
     if (current.isDefault && !data.isActive) throw new BusinessError("The default branch cannot be deactivated. Make another branch the default first.");
+    // Reopening a closed branch takes a slot, like opening a new one.
+    if (data.isActive && !current.isActive) await assertBranchSlotAvailable();
 
     await db.branch.update({ where: { id: branchId }, data });
 

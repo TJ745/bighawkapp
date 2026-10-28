@@ -18,6 +18,11 @@ export type Stat = {
   trendLabel?: string;
   invertTrend?: boolean;
   tone?: "success" | "warning" | "danger" | "default";
+  /**
+   * Most of these cards show money, so that is the default. A **count** must say so: rendered as
+   * money it reads "SAR 3.00 customers with a balance", which is how it read until someone looked.
+   */
+  as?: "money" | "number";
 };
 
 const TILE: Record<StatTint, string> = {
@@ -56,7 +61,9 @@ export function StatCards({ stats, columns = 3 }: { stats: Stat[]; columns?: 2 |
                 ) : null}
                 <p className="text-sm font-medium text-muted-foreground">{s.label}</p>
               </div>
-              <p className={cn("text-2xl font-semibold tracking-tight tabular-nums", VALUE_TONE[s.tone ?? "default"])}>{format.money(s.value)}</p>
+              <p className={cn("text-2xl font-semibold tracking-tight tabular-nums", VALUE_TONE[s.tone ?? "default"])}>
+                {s.as === "number" ? format.number(s.value) : format.money(s.value)}
+              </p>
               {s.trend !== null && s.trend !== undefined ? (
                 <p className="flex flex-wrap items-center gap-1.5 text-xs">
                   <span className={cn("inline-flex items-center gap-0.5 font-medium", good ? "text-success" : "text-destructive")}>

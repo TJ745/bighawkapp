@@ -29,12 +29,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Combobox } from "@/components/shared/combobox";
 import { useFormat } from "@/components/providers/format-provider";
 import { completeSale, discardSale, resumeSale } from "@/actions/pos";
+import { OfflineSales } from "./offline-sales";
+import { newSaleReference, queueAvailable, queueSale } from "@/lib/offline/sale-queue";
 import { sendOrderToKitchen } from "@/actions/kitchen";
 import { payAppointment } from "@/actions/staff";
 import { checkOutStay, payWorkOrder } from "@/actions/industries";
 import { quotePrices } from "@/actions/pricing";
 import { payOrder, saveOrder } from "@/actions/tables";
-import { calcTotals } from "@/lib/business/totals";
+import { calcTotals, round2 } from "@/lib/business/totals";
 import type { ParkedSale, RegisterItem, RegisterRow } from "@/lib/data/pos";
 import { isMeasuredUnit, parseScaleBarcode, scaleQuantity, type ScaleBarcodeConfig } from "@/lib/business/scale-barcode";
 import { cn } from "@/lib/utils";
@@ -609,7 +611,7 @@ export function RegisterScreen({
   async function submit(payments: PaymentDraft[], park: boolean) {
     setBusy(true);
     try {
-      const result = await completeSale({
+      const saleInput = {
         registerId: registerId || null,
         customerId: customerId || null,
         cartDiscountPercent,
@@ -617,7 +619,49 @@ export function RegisterScreen({
         lines: cartPayload(),
         payments: payments.map((p) => ({ method: p.method, paymentAccountId: p.paymentAccountId, amount: p.amount, reference: p.reference })),
         park,
-      });
+      };
+
+      /**
+       * Nothing is held back while the connection is up — the server prices and records the sale
+       * as it always has. Only an outage makes the till keep the sale itself.
+       *
+       * A held bill is never queued: it takes no money and moves no stock, so there is nothing to
+       * lose by waiting, and a hold the server has not seen would be invisible to every other till.
+       */
+      const offline = queueAvailable() && !park && typeof navigator !== "undefined" && !navigator.onLine;
+      if (offline) {
+        const reference = newSaleReference();
+        const soldAt = new Date();
+        await queueSale({
+          reference,
+          ringupAt: soldAt.toISOString(),
+          branchName,
+          displayTotal: totals.grandTotal,
+          input: saleInput,
+          attempts: 0,
+        });
+        window.dispatchEvent(new Event("bighawk:sale-queued"));
+        setReceipt({
+          // No document number exists yet: the server allocates it when the sale reaches it.
+          number: `Provisional · ${reference.slice(-6).toUpperCase()}`,
+          orderNumber: null,
+          lines: receiptLines(),
+          totals,
+          payments,
+          changeDue: Math.max(0, round2(payments.reduce((sum, p) => sum + p.amount, 0) - totals.grandTotal)),
+          customerName: customers.find((c) => c.id === customerId)?.name ?? null,
+          cashierName: currentUserName,
+          branchName,
+          soldAt,
+          saleId: null,
+          provisional: true,
+        });
+        clearCart();
+        toast.success("Sold offline — it will be sent when the connection returns");
+        return true;
+      }
+
+      const result = await completeSale(saleInput);
       if (!result.success) {
         toast.error(result.error);
         return false;
@@ -791,6 +835,9 @@ export function RegisterScreen({
           </CardContent>
         </Card>
       ) : null}
+
+      {/* Says plainly when the till is on its own, and sends what it held once it is not. */}
+      <OfflineSales />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         {/* Catalogue */}

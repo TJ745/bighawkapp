@@ -14,11 +14,13 @@ export const SETTINGS_SECTIONS: { label: string; href: string; superAdminOnly?: 
   { label: "Payment Terms", href: "/settings/payment-terms" },
   { label: "Payment Accounts", href: "/settings/accounts" },
   { label: "Notifications", href: "/settings/notifications" },
+  { label: "Activity", href: "/settings/audit" },
   { label: "Date & Regional", href: "/settings/regional" },
   { label: "Document & Email Styling", href: "/settings/styling", superAdminOnly: true },
   { label: "Email (SMTP)", href: "/settings/email", superAdminOnly: true },
   { label: "Security", href: "/settings/security", superAdminOnly: true },
   { label: "Modules", href: "/settings/modules", superAdminOnly: true },
+  { label: "Companies", href: "/settings/companies", superAdminOnly: true },
 ];
 
 // Vertical section list on desktop, horizontally scrollable pills on small screens.

@@ -1,9 +1,8 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, type Tx } from "@/lib/db";
 import { BusinessError } from "@/lib/auth/errors";
 import { num } from "@/lib/decimal";
 import { toDateOnly } from "@/lib/dates";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import type { PosPaymentMethod } from "@/lib/generated/prisma/enums";
 import { applyStockMovement, round3 } from "./inventory";
 import { getPriceContext, resolveListPrice, type PriceContext } from "./pricing";
@@ -326,7 +325,7 @@ export async function settlePayments(payments: SalePaymentInput[], grandTotal: n
 
 /** Writes the payment rows net of change, so each account receives what was actually kept. */
 async function recordPayments(
-  tx: Prisma.TransactionClient,
+  tx: Tx,
   input: { saleId: string; payments: SalePaymentInput[]; changeDue: number; date: string },
 ) {
   let remainingChange = input.changeDue;
@@ -367,6 +366,14 @@ export type CreateSaleInput = {
   workOrderId?: string | null;
   /** Quick service: take a collection number for the day, to call out at the counter. */
   withOrderNumber?: boolean;
+  /**
+   * The till's own id for this sale, when it was rung up offline and is being replayed.
+   *
+   * Replay has to be safe to repeat: a connection that drops *after* the server committed but
+   * before the till heard back leaves the queue thinking it failed. Without this the retry would
+   * ring the sale up twice — money invented, stock gone, and nobody the wiser.
+   */
+  clientReference?: string | null;
   cartDiscountPercent: number;
   note: string | null;
   lines: CartLineInput[];
@@ -433,6 +440,29 @@ export async function createSale(input: CreateSaleInput) {
 
   const date = input.today;
 
+  /**
+   * Already recorded? Then this is a repeat of a replay that did reach the server, and the answer
+   * is the sale it already made. Checked before the transaction so a repeat costs one query, and
+   * backed by a unique index so two replays racing cannot both get through.
+   */
+  if (input.clientReference) {
+    const existing = await db.posSale.findUnique({
+      where: { clientReference: input.clientReference },
+      select: { id: true, number: true, orderNumber: true, status: true, changeDue: true },
+    });
+    if (existing) {
+      return {
+        id: existing.id,
+        number: existing.number,
+        orderNumber: existing.orderNumber,
+        totals,
+        changeDue: num(existing.changeDue),
+        status: existing.status,
+        alreadyRecorded: true as const,
+      };
+    }
+  }
+
   return db.$transaction(async (tx) => {
     const number = await nextDocumentNumber(tx, "POS_SALE", new Date());
     // A collection number is only taken when the counter actually calls numbers out.
@@ -441,6 +471,7 @@ export async function createSale(input: CreateSaleInput) {
     const sale = await tx.posSale.create({
       data: {
         number,
+        clientReference: input.clientReference ?? null,
         branchId: input.branchId,
         registerId: input.registerId,
         shiftId: input.park ? null : input.shiftId,
@@ -556,7 +587,7 @@ export async function createSale(input: CreateSaleInput) {
       if (linked.count === 0) throw new BusinessError("That job has already been paid for, or was cancelled.");
     }
 
-    return { id: sale.id, number, orderNumber, totals, changeDue, status: sale.status };
+    return { id: sale.id, number, orderNumber, totals, changeDue, status: sale.status, alreadyRecorded: false as const };
   });
 }
 

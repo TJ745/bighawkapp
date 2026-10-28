@@ -5,6 +5,7 @@ import { BusinessError } from "@/lib/auth/errors";
 import { authorizeModule, type AuthContext } from "@/lib/auth/session";
 import { parseInput, runAction, type ActionResult } from "@/lib/actions";
 import { cancelReceipt, getReceivableLines, receiveGoods, type ReceivableLine } from "@/lib/business/receiving";
+import { assertBranchAllowed } from "@/lib/data/platform";
 import { recordAudit } from "@/lib/platform/audit";
 import { cancelReceiptSchema, receiveGoodsSchema } from "@/lib/validation/receiving";
 
@@ -51,6 +52,7 @@ export async function receiveDelivery(
   return runAction(async () => {
     const auth = await authorizeReceiving("edit");
     const data = parseInput(receiveGoodsSchema, input);
+    await assertBranchAllowed(data.branchId);
 
     const result = await receiveGoods({
       purchaseId: data.purchaseId,

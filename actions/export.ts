@@ -1,7 +1,8 @@
 "use server";
 
 import { BusinessError } from "@/lib/auth/errors";
-import { authorize, authorizeModule } from "@/lib/auth/session";
+import { authorize, authorizeModule, type AuthContext } from "@/lib/auth/session";
+import { recordAudit } from "@/lib/platform/audit";
 import { runAction, type ActionResult } from "@/lib/actions";
 import { CSV_ROW_LIMIT, csvFilename, toCsv, type CsvColumn } from "@/lib/export/csv";
 import { getCurrentBranch } from "@/lib/data/platform";
@@ -48,18 +49,35 @@ function assertExportable(total: number, subject: string) {
   }
 }
 
-async function build<T>(subject: string, columns: CsvColumn<T>[], rows: T[], total: number): Promise<CsvExport> {
+/**
+ * Builds the file, and records that somebody took it.
+ *
+ * The audit entry lives here rather than in each action because every export goes through this
+ * one function: "who took a copy of the customer list, and when" is exactly the question an
+ * export screen raises, and it is not a question to answer by remembering to add a line in nine
+ * places. Nothing is recorded when the export is refused for being too large — no file left.
+ */
+async function build<T>(auth: AuthContext, subject: string, columns: CsvColumn<T>[], rows: T[], total: number): Promise<CsvExport> {
   assertExportable(total, subject);
-  return { filename: csvFilename(subject, await today()), csv: toCsv(columns, rows), rows: rows.length };
+  const file = { filename: csvFilename(subject, await today()), csv: toCsv(columns, rows), rows: rows.length };
+  await recordAudit({
+    auth,
+    action: "export.downloaded",
+    entity: "Export",
+    entityId: subject,
+    summary: `${rows.length} ${subject} exported to ${file.filename}`,
+  });
+  return file;
 }
 
 // --- Sales -------------------------------------------------------------------
 
 export async function exportInvoices(search: Record<string, string | string[] | undefined>): Promise<ActionResult<CsvExport>> {
   return runAction(async () => {
-    await authorize("SALES", "view");
+    const auth = await authorize("SALES", "view");
     const { items, total } = await listInvoices(exportParams(search));
     return build(
+      auth,
       "invoices",
       [
         { header: "Invoice", value: (r) => r.number },
@@ -81,9 +99,10 @@ export async function exportInvoices(search: Record<string, string | string[] | 
 
 export async function exportQuotations(search: Record<string, string | string[] | undefined>): Promise<ActionResult<CsvExport>> {
   return runAction(async () => {
-    await authorize("SALES", "view");
+    const auth = await authorize("SALES", "view");
     const { items, total } = await listQuotations(exportParams(search));
     return build(
+      auth,
       "quotations",
       [
         { header: "Quotation", value: (r) => r.number },
@@ -103,9 +122,10 @@ export async function exportQuotations(search: Record<string, string | string[] 
 
 export async function exportPurchases(search: Record<string, string | string[] | undefined>): Promise<ActionResult<CsvExport>> {
   return runAction(async () => {
-    await authorize("PROCUREMENT", "view");
+    const auth = await authorize("PROCUREMENT", "view");
     const { items, total } = await listPurchases(exportParams(search));
     return build(
+      auth,
       "purchases",
       [
         { header: "Purchase", value: (r) => r.number },
@@ -140,18 +160,19 @@ const PARTY_COLUMNS: CsvColumn<Awaited<ReturnType<typeof listCustomers>>["items"
 
 export async function exportCustomers(search: Record<string, string | string[] | undefined>): Promise<ActionResult<CsvExport>> {
   return runAction(async () => {
-    await authorize("CUSTOMERS", "view");
+    const auth = await authorize("CUSTOMERS", "view");
     const { items, total } = await listCustomers(exportParams(search));
-    return build("customers", PARTY_COLUMNS, items, total);
+    return build(auth, "customers", PARTY_COLUMNS, items, total);
   });
 }
 
 export async function exportSuppliers(search: Record<string, string | string[] | undefined>): Promise<ActionResult<CsvExport>> {
   return runAction(async () => {
-    await authorize("PROCUREMENT", "view");
+    const auth = await authorize("PROCUREMENT", "view");
     const { items, total } = await listSuppliers(exportParams(search));
     // A supplier's figures are what the company owes, not what it is owed.
     return build(
+      auth,
       "suppliers",
       PARTY_COLUMNS.map((column) => (column.header === "Invoiced" ? { ...column, header: "Purchased" } : column)),
       items,
@@ -164,10 +185,11 @@ export async function exportSuppliers(search: Record<string, string | string[] |
 
 export async function exportPosSales(search: Record<string, string | string[] | undefined>): Promise<ActionResult<CsvExport>> {
   return runAction(async () => {
-    await authorizeModule("POS", "POS", "view");
+    const auth = await authorizeModule("POS", "POS", "view");
     const branch = await getCurrentBranch();
     const { sales, total } = await listSales(exportParams(search), branch.id);
     return build(
+      auth,
       "pos-sales",
       [
         { header: "Receipt", value: (r) => r.number },
@@ -189,11 +211,12 @@ export async function exportPosSales(search: Record<string, string | string[] | 
 
 export async function exportStock(search: Record<string, string | string[] | undefined>): Promise<ActionResult<CsvExport>> {
   return runAction(async () => {
-    await authorizeModule("POS", "INVENTORY", "view");
+    const auth = await authorizeModule("POS", "INVENTORY", "view");
     const branch = await getCurrentBranch();
     // Stock is held per branch, so the file says which branch it is a count of.
     const { items, total } = await listStock(exportParams(search), branch.id);
     return build(
+      auth,
       `stock-${branch.name}`,
       [
         { header: "Item", value: (r) => r.itemName },

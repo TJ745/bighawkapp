@@ -97,7 +97,7 @@ export async function updateStaff(staffId: string, formData: FormData): Promise<
 /** Books a service. Times and prices come from the catalogue; clashes are refused. */
 export async function bookAppointment(input: unknown): Promise<ActionResult<{ id: string; startAt: string; minutes: number }>> {
   return runAction(async () => {
-    const auth = await authorizePosCapability("APPOINTMENTS", "POS", "create");
+    const auth = await authorizePosCapability("APPOINTMENTS", "POS_BOOKINGS", "create");
     const data = parseInput(appointmentSchema, input);
     const branch = await getCurrentBranch();
 
@@ -144,7 +144,7 @@ export async function payAppointment(
   input: unknown,
 ): Promise<ActionResult<{ id: string; number: string; changeDue: number; grandTotal: number }>> {
   return runAction(async () => {
-    const auth = await authorizePosCapability("APPOINTMENTS", "POS", "create");
+    const auth = await authorizePosCapability("APPOINTMENTS", "POS_BOOKINGS", "create");
     const data = parseInput(payAppointmentSchema, input);
     const [branch, settings, todayDate] = await Promise.all([getCurrentBranch(), getAppSettings(), today()]);
     if (branch.posConfig && !branch.posConfig.isActive) throw new BusinessError("POS is switched off for this branch.");
@@ -188,7 +188,7 @@ export async function payAppointment(
 /** Moves a booking along its day: confirmed, arrived, no show, cancelled. */
 export async function moveAppointment(input: unknown): Promise<ActionResult<{ customerName: string; status: string }>> {
   return runAction(async () => {
-    const auth = await authorizePosCapability("APPOINTMENTS", "POS", "edit");
+    const auth = await authorizePosCapability("APPOINTMENTS", "POS_BOOKINGS", "edit");
     const data = parseInput(appointmentStatusSchema, input);
     const branch = await getCurrentBranch();
     const result = await setAppointmentStatus({ appointmentId: data.appointmentId, status: data.status, branchId: branch.id });

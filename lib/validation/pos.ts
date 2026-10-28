@@ -54,6 +54,16 @@ export const createSaleSchema = z.object({
   lines: z.array(cartLineSchema).min(1, "Add at least one item"),
   payments: z.array(salePaymentSchema).default([]),
   park: z.boolean().default(false),
+  /**
+   * The till's own id for a sale rung up offline. Present only on a replay, and what makes
+   * replaying safe to repeat — the server returns the sale it already made rather than a second one.
+   */
+  clientReference: z
+    .string()
+    .trim()
+    .max(80)
+    .nullish()
+    .transform((v) => (v ? v : null)),
 });
 
 export const returnLineSchema = z.object({

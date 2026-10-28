@@ -54,7 +54,7 @@ const SESSION_REFRESH_SECONDS = 5 * 60;
 const SESSION_MAX_SECONDS = 60 * 60 * 24 * 30;
 
 async function sessionExpiry() {
-  const settings = await db.appSettings.findUnique({ where: { id: "default" }, select: { sessionTimeoutMinutes: true } });
+  const settings = await db.appSettings.findFirst({ select: { sessionTimeoutMinutes: true } });
   const minutes = settings?.sessionTimeoutMinutes ?? 720;
   return new Date(Date.now() + minutes * 60 * 1000);
 }

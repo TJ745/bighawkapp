@@ -4,6 +4,7 @@ import { DateRangeFilter } from "@/components/shared/date-range-filter";
 import { PageHeader } from "@/components/shared/page-header";
 import { requirePosCapability } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import { currentCompanyUsers } from "@/lib/platform/user-scope";
 import { getCurrentBranch } from "@/lib/data/platform";
 import { today } from "@/lib/data/sales";
 import { listStaff, staffCommission } from "@/lib/data/staff";
@@ -25,7 +26,7 @@ export default async function StaffPage({ searchParams }: PageProps<"/pos/staff"
   const [staff, commission, users] = await Promise.all([
     listStaff(branch.id),
     staffCommission(branch.id, range),
-    db.user.findMany({ where: { isActive: true, isSuperAdmin: false }, orderBy: { name: "asc" }, select: { id: true, name: true, email: true } }),
+    db.user.findMany({ where: { isActive: true, ...(await currentCompanyUsers()), isSuperAdmin: false }, orderBy: { name: "asc" }, select: { id: true, name: true, email: true } }),
   ]);
 
   return (

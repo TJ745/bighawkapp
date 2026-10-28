@@ -7,16 +7,17 @@ import { BusinessError } from "@/lib/auth/errors";
 import { authorize } from "@/lib/auth/session";
 import { formDataToObject, parseInput, runAction, type ActionResult } from "@/lib/actions";
 import { nextDocumentNumber } from "@/lib/business/numbering";
-import { round2 } from "@/lib/business/totals";
+import { round2, vatFromGross } from "@/lib/business/totals";
 import { getPurchase } from "@/lib/data/procurement";
 import { getInvoice } from "@/lib/data/sales";
 import { parseDateOnly } from "@/lib/dates";
+import { auditMoney as money, recordAudit } from "@/lib/platform/audit";
 import { renderEmailTemplate, sendEmail } from "@/lib/email/mailer";
 import { renderPurchasePdf } from "@/lib/pdf/procurement";
 import { renderInvoicePdf } from "@/lib/pdf/sales";
 import { getFormatters } from "@/lib/settings/formatters";
 import { deleteStoredFile, DOCUMENT_TYPES, fileFromFormData, MAX_DOCUMENT_BYTES, storeFile } from "@/lib/storage";
-import { categoryNameSchema, financeEntrySchema } from "@/lib/validation/finance";
+import { categoryNameSchema, expenseEntrySchema, financeEntrySchema } from "@/lib/validation/finance";
 import { sendDocumentSchema } from "@/lib/validation/sales";
 
 function revalidate() {
@@ -67,6 +68,13 @@ export async function createOtherIncome(formData: FormData): Promise<ActionResul
         },
       });
     });
+    await recordAudit({
+      auth,
+      action: "finance.income_recorded",
+      entity: "OtherIncome",
+      entityId: row.id,
+      summary: `Income ${row.number} of ${money(input.amount)} recorded`,
+    });
     revalidate();
     return { id: row.id };
   });
@@ -74,7 +82,7 @@ export async function createOtherIncome(formData: FormData): Promise<ActionResul
 
 export async function updateOtherIncome(id: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("FINANCE", "edit");
+    const auth = await authorize("FINANCE", "edit");
     const existing = await db.otherIncome.findUnique({ where: { id } });
     if (!existing) throw new BusinessError("Income entry not found.");
     const raw = formDataToObject(formData);
@@ -96,6 +104,13 @@ export async function updateOtherIncome(id: string, formData: FormData): Promise
       },
     });
     if ((attachment || removeAttachment) && existing.attachmentKey) await deleteStoredFile(existing.attachmentKey);
+    await recordAudit({
+      auth,
+      action: "finance.income_updated",
+      entity: "OtherIncome",
+      entityId: id,
+      summary: `Income ${existing.number} changed from ${money(existing.amount)} to ${money(input.amount)}`,
+    });
     revalidate();
   });
 }
@@ -105,7 +120,7 @@ export async function updateOtherIncome(id: string, formData: FormData): Promise
 export async function createExpense(formData: FormData): Promise<ActionResult<{ id: string }>> {
   return runAction(async () => {
     const auth = await authorize("FINANCE", "create");
-    const input = parseInput(financeEntrySchema, formDataToObject(formData));
+    const input = parseInput(expenseEntrySchema, formDataToObject(formData));
     await assertCategory(input.categoryId, "EXPENSE");
     await assertAccount(input.paymentAccountId);
     const attachment = await attachmentData(formData, "expenses");
@@ -116,7 +131,11 @@ export async function createExpense(formData: FormData): Promise<ActionResult<{ 
         data: {
           number,
           categoryId: input.categoryId,
+          // `amount` is what was paid, VAT included — the figure money-out counts, unchanged.
+          // The rate only says how much of it was tax, so a VAT return can reclaim it.
           amount: round2(input.amount),
+          vatRate: input.vatRate,
+          vatAmount: vatFromGross(input.amount, input.vatRate).vat,
           date: parseDateOnly(input.date),
           paymentAccountId: input.paymentAccountId,
           description: input.description,
@@ -125,6 +144,13 @@ export async function createExpense(formData: FormData): Promise<ActionResult<{ 
         },
       });
     });
+    await recordAudit({
+      auth,
+      action: "finance.expense_recorded",
+      entity: "Expense",
+      entityId: row.id,
+      summary: `Expense ${row.number} of ${money(input.amount)} recorded`,
+    });
     revalidate();
     return { id: row.id };
   });
@@ -132,11 +158,11 @@ export async function createExpense(formData: FormData): Promise<ActionResult<{ 
 
 export async function updateExpense(id: string, formData: FormData): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("FINANCE", "edit");
+    const auth = await authorize("FINANCE", "edit");
     const existing = await db.expense.findUnique({ where: { id } });
     if (!existing) throw new BusinessError("Expense not found.");
     const raw = formDataToObject(formData);
-    const input = parseInput(financeEntrySchema, raw);
+    const input = parseInput(expenseEntrySchema, raw);
     await assertCategory(input.categoryId, "EXPENSE");
     await assertAccount(input.paymentAccountId);
     const attachment = await attachmentData(formData, "expenses");
@@ -147,6 +173,8 @@ export async function updateExpense(id: string, formData: FormData): Promise<Act
       data: {
         categoryId: input.categoryId,
         amount: round2(input.amount),
+        vatRate: input.vatRate,
+        vatAmount: vatFromGross(input.amount, input.vatRate).vat,
         date: parseDateOnly(input.date),
         paymentAccountId: input.paymentAccountId,
         description: input.description,
@@ -154,6 +182,13 @@ export async function updateExpense(id: string, formData: FormData): Promise<Act
       },
     });
     if ((attachment || removeAttachment) && existing.attachmentKey) await deleteStoredFile(existing.attachmentKey);
+    await recordAudit({
+      auth,
+      action: "finance.expense_updated",
+      entity: "Expense",
+      entityId: id,
+      summary: `Expense ${existing.number} changed from ${money(existing.amount)} to ${money(input.amount)}`,
+    });
     revalidate();
   });
 }
@@ -162,7 +197,7 @@ export async function updateExpense(id: string, formData: FormData): Promise<Act
 
 export async function createFinanceCategory(kind: FinanceCategoryKind, nameInput: unknown): Promise<ActionResult<{ id: string; name: string }>> {
   return runAction(async () => {
-    await authorize("FINANCE", "create");
+    const auth = await authorize("FINANCE", "create");
     if (kind !== "INCOME" && kind !== "EXPENSE") throw new BusinessError("Invalid category kind.");
     const name = parseInput(categoryNameSchema, nameInput);
     const existing = await db.financeCategory.findUnique({ where: { kind_name: { kind, name } } });
@@ -171,6 +206,13 @@ export async function createFinanceCategory(kind: FinanceCategoryKind, nameInput
       return { id: existing.id, name: existing.name };
     }
     const row = await db.financeCategory.create({ data: { kind, name } });
+    await recordAudit({
+      auth,
+      action: "finance.category_created",
+      entity: "FinanceCategory",
+      entityId: row.id,
+      summary: `${kind === "INCOME" ? "Income" : "Expense"} category "${row.name}" added`,
+    });
     revalidate();
     return { id: row.id, name: row.name };
   });
@@ -198,7 +240,7 @@ export async function prepareInvoiceReminder(invoiceId: string): Promise<ActionR
 
 export async function sendInvoiceReminder(invoiceId: string, input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("FINANCE", "edit");
+    const auth = await authorize("FINANCE", "edit");
     const message = parseInput(sendDocumentSchema, input);
     const inv = await getInvoice(invoiceId);
     if (!inv) throw new BusinessError("Invoice not found.");
@@ -209,6 +251,13 @@ export async function sendInvoiceReminder(invoiceId: string, input: unknown): Pr
       subject: message.subject,
       text: message.body,
       attachments: [{ filename: `${inv.number}.pdf`, content: pdf, contentType: "application/pdf" }],
+    });
+    await recordAudit({
+      auth,
+      action: "finance.invoice_reminder_sent",
+      entity: "Invoice",
+      entityId: invoiceId,
+      summary: `Reminder for ${inv.number} (${money(inv.remaining)} outstanding) emailed to ${message.to}`,
     });
   });
 }
@@ -233,7 +282,7 @@ export async function preparePurchaseReminder(purchaseId: string): Promise<Actio
 
 export async function sendPurchaseReminder(purchaseId: string, input: unknown): Promise<ActionResult> {
   return runAction(async () => {
-    await authorize("FINANCE", "edit");
+    const auth = await authorize("FINANCE", "edit");
     const message = parseInput(sendDocumentSchema, input);
     const p = await getPurchase(purchaseId);
     if (!p) throw new BusinessError("Purchase not found.");
@@ -243,6 +292,13 @@ export async function sendPurchaseReminder(purchaseId: string, input: unknown): 
       subject: message.subject,
       text: message.body,
       attachments: [{ filename: `${p.number}.pdf`, content: pdf, contentType: "application/pdf" }],
+    });
+    await recordAudit({
+      auth,
+      action: "finance.purchase_reminder_sent",
+      entity: "Purchase",
+      entityId: purchaseId,
+      summary: `Reminder for ${p.number} emailed to ${message.to}`,
     });
   });
 }

@@ -14,6 +14,12 @@ datasource db {
 // Users, roles & authentication (BetterAuth-managed tables + app roles)
 // ---------------------------------------------------------------------------
 
+/// What a person may do, as distinct from what the company has bought (see AppModule).
+///
+/// The POS side is split by **job**, not by screen: a kitchen hand, a waiter and a cashier work the
+/// same shop at the same time and should not see each other's screens. One POS permission would
+/// hand the kitchen the day's takings. Every POS_* value is owned by the POS product module in
+/// `lib/platform/modules.ts`, so switching POS off still closes all of them at once.
 enum PermissionModule {
   CUSTOMERS
   SALES
@@ -22,38 +28,168 @@ enum PermissionModule {
   FINANCE
   USERS
   SETTINGS
+  /// The till: register, returns, sales history, shifts, and counter work (work orders, rentals, rooms).
   POS
+  /// Floor service: tables and tabs. The waiter's job.
+  POS_ORDERS
+  /// The kitchen board, and nothing else.
+  POS_KITCHEN
+  /// The appointments diary. The front desk's job.
+  POS_BOOKINGS
+  /// Maintaining the catalogue and stock, plus the POS setup screens.
   INVENTORY
 }
 
+/// A customer of BigHawk. Every tenant-owned row points at one, and the tenant filter in
+/// `lib/db.ts` makes that pointer the thing a query is scoped by — never the caller remembering.
+model Company {
+  id        String   @id @default(cuid())
+  /// Shown to the BigHawk operator when picking between companies.
+  name      String
+  /// Short, stable handle for logs and support, unique across the platform.
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  /// How many people this customer has bought, the administrator included: "five users" means
+  /// five accounts, not five plus one. Counted over **active** users only, so deactivating
+  /// somebody frees the seat. Set by the BigHawk operator; the customer can only read it.
+  userLimit   Int      @default(5)
+  /// How many branches this customer has bought, MAIN included — same counting rule.
+  branchLimit Int      @default(5)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// The people who work for this company. The BigHawk operator belongs to none.
+  users User[]
+
+  roles                        Role[]
+  rolePermissions              RolePermission[]
+  companySettingss             CompanySettings[]
+  zatcaSettingss               ZatcaSettings[]
+  emailSettingss               EmailSettings[]
+  appSettingss                 AppSettings[]
+  documentSequences            DocumentSequence[]
+  paymentAccounts              PaymentAccount[]
+  notificationSettings         NotificationSetting[]
+  emailTemplates               EmailTemplate[]
+  customers                    Customer[]
+  customerDocuments            CustomerDocument[]
+  suppliers                    Supplier[]
+  supplierDocuments            SupplierDocument[]
+  quotations                   Quotation[]
+  quotationItems               QuotationItem[]
+  quotationAttachments         QuotationAttachment[]
+  invoices                     Invoice[]
+  invoiceItems                 InvoiceItem[]
+  invoiceAttachments           InvoiceAttachment[]
+  invoicePayments              InvoicePayment[]
+  customerAdvances             CustomerAdvance[]
+  customerAdvanceRefunds       CustomerAdvanceRefund[]
+  supplierAdvances             SupplierAdvance[]
+  supplierAdvanceRefunds       SupplierAdvanceRefund[]
+  purchaseReturns              PurchaseReturn[]
+  purchaseReturnItems          PurchaseReturnItem[]
+  supplierQuotations           SupplierQuotation[]
+  supplierQuotationItems       SupplierQuotationItem[]
+  supplierQuotationAttachments SupplierQuotationAttachment[]
+  purchases                    Purchase[]
+  purchaseItems                PurchaseItem[]
+  purchaseAttachments          PurchaseAttachment[]
+  purchasePayments             PurchasePayment[]
+  projects                     Project[]
+  projectDocuments             ProjectDocument[]
+  financeCategorys             FinanceCategory[]
+  otherIncomes                 OtherIncome[]
+  expenses                     Expense[]
+  notifications                Notification[]
+  notificationEvents           NotificationEvent[]
+  moduleSettings               ModuleSetting[]
+  branchs                      Branch[]
+  posConfigurations            PosConfiguration[]
+  auditLogs                    AuditLog[]
+  itemCategorys                ItemCategory[]
+  items                        Item[]
+  itemVariants                 ItemVariant[]
+  stockLevels                  StockLevel[]
+  stockMovements               StockMovement[]
+  posRegisters                 PosRegister[]
+  posShifts                    PosShift[]
+  posCashMovements             PosCashMovement[]
+  posSales                     PosSale[]
+  posTables                    PosTable[]
+  posSaleItems                 PosSaleItem[]
+  posPayments                  PosPayment[]
+  posReturns                   PosReturn[]
+  posReturnItems               PosReturnItem[]
+  modifierGroups               ModifierGroup[]
+  modifierOptions              ModifierOption[]
+  itemModifierGroups           ItemModifierGroup[]
+  posSaleItemModifiers         PosSaleItemModifier[]
+  posKitchenTickets            PosKitchenTicket[]
+  posKitchenTicketItems        PosKitchenTicketItem[]
+  recipeComponents             RecipeComponent[]
+  posSaleItemIngredients       PosSaleItemIngredient[]
+  posOrderCounters             PosOrderCounter[]
+  staffMembers                 StaffMember[]
+  posSaleItemStaffs            PosSaleItemStaff[]
+  appointments                 Appointment[]
+  appointmentItems             AppointmentItem[]
+  membershipPlans              MembershipPlan[]
+  membershipPlanServices       MembershipPlanService[]
+  memberships                  Membership[]
+  membershipUses               MembershipUse[]
+  priceLists                   PriceList[]
+  priceListItems               PriceListItem[]
+  priceTiers                   PriceTier[]
+  workOrders                   WorkOrder[]
+  ticketEvents                 TicketEvent[]
+  ticketIssueds                TicketIssued[]
+  rooms                        Room[]
+  stays                        Stay[]
+  rentals                      Rental[]
+  creditNotes                  CreditNote[]
+  creditNoteItems              CreditNoteItem[]
+  purchaseReceipts             PurchaseReceipt[]
+  purchaseReceiptItems         PurchaseReceiptItem[]
+
+  @@index([isActive])
+}
+
 model User {
-  id                  String    @id @default(cuid())
-  name                String
-  email               String    @unique
-  emailVerified       Boolean   @default(false)
-  image               String?
-  phone               String?
-  isActive            Boolean   @default(true)
+  id                       String    @id @default(cuid())
+  name                     String
+  email                    String    @unique
+  emailVerified            Boolean   @default(false)
+  image                    String?
+  phone                    String?
+  isActive                 Boolean   @default(true)
   // Exactly one Super Admin exists; enforced by a partial unique index in the migration.
-  isSuperAdmin        Boolean   @default(false)
+  isSuperAdmin             Boolean   @default(false)
   // Login security (Settings → Security): lockout after repeated failed sign-ins.
-  failedLoginAttempts Int       @default(0)
-  lockedUntil         DateTime?
+  failedLoginAttempts      Int       @default(0)
+  lockedUntil              DateTime?
   // When a reset link was last sent, so asking again cannot be used to flood someone's inbox.
   // Not a security boundary on its own — the token itself is random and short-lived.
   passwordResetRequestedAt DateTime?
-  roleId              String?
-  role                Role?     @relation(fields: [roleId], references: [id], onDelete: SetNull)
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  roleId                   String?
+  role                     Role?     @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  /// The branch this person works at. **Null means every branch** — head office, an owner, a
+  /// roaming manager. A pinned user cannot switch to another branch or act on one, which is what
+  /// stops a cashier at one shop reading another shop's takings.
+  branchId                 String?
+  branch                   Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
   sessions      Session[]
   accounts      Account[]
   notifications Notification[]
   auditLogs     AuditLog[]
   staffMember   StaffMember?
+  company       Company?       @relation(fields: [companyId], references: [id])
+  companyId     String?
 
   @@index([roleId])
+  @@index([branchId])
   @@index([isActive])
 }
 
@@ -103,7 +239,7 @@ model Verification {
 
 model Role {
   id          String           @id @default(cuid())
-  name        String           @unique
+  name        String
   description String?
   // Preset roles ship with the app and cannot be deleted.
   isSystem    Boolean          @default(false)
@@ -111,6 +247,13 @@ model Role {
   users       User[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, name])
+  @@index([companyId])
 }
 
 // One row per role + module with the four allowed actions.
@@ -124,7 +267,12 @@ model RolePermission {
   canEdit   Boolean          @default(false)
   canDelete Boolean          @default(false)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([roleId, module])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +281,8 @@ model RolePermission {
 
 enum DocumentType {
   CUSTOMER_ADVANCE
+  PURCHASE_RETURN
+  SUPPLIER_ADVANCE
   GOODS_RECEIPT
   CREDIT_NOTE
   RENTAL
@@ -188,8 +338,8 @@ enum PdfFont {
 
 // Single row (id = "default"): company identity reused across the app, PDFs and emails.
 model CompanySettings {
-  id                String   @id @default("default")
-  companyName       String   @default("")
+  id                String  @id @default(cuid())
+  companyName       String  @default("")
   logoUrl           String?
   crNumber          String?
   vatNumber         String?
@@ -220,11 +370,16 @@ model CompanySettings {
   countryCode      String  @default("SA")
 
   updatedAt DateTime @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId])
 }
 
 /**
  * How far this deployment goes with Saudi e-invoicing.
- *
  * OFF leaves documents exactly as they were, which is what a company still filling in its details
  * — or one outside Saudi Arabia — needs. PHASE_1 is ZATCA's "Generation" phase: the mandatory
  * fields, Arabic, and the TLV QR code on every invoice and receipt, all produced locally with no
@@ -240,15 +395,21 @@ enum ZatcaMode {
 // Kept out of AppSettings because that row is sent to client components, while Phase 2 will store
 // cryptographic material here (CSR, certificates, the private key) that must never leave the server.
 model ZatcaSettings {
-  id        String    @id @default("default")
+  id        String    @id @default(cuid())
   mode      ZatcaMode @default(OFF)
   updatedAt DateTime  @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId])
 }
 
 // Single row (id = "default"): outgoing email (SMTP) — Super Admin only.
 // Kept out of AppSettings because that row is sent to client components; the password never is.
 model EmailSettings {
-  id        String   @id @default("default")
+  id        String   @id @default(cuid())
   host      String   @default("")
   port      Int      @default(587)
   secure    Boolean  @default(false)
@@ -258,11 +419,17 @@ model EmailSettings {
   fromName  String   @default("")
   replyTo   String   @default("")
   updatedAt DateTime @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId])
 }
 
 // Single row (id = "default"): every non-company setting section.
 model AppSettings {
-  id String @id @default("default")
+  id String @id @default(cuid())
 
   // VAT
   vatEnabled     Boolean @default(true)
@@ -302,12 +469,18 @@ model AppSettings {
   lockoutMinutes           Int     @default(15)
 
   updatedAt DateTime @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId])
 }
 
 // Concurrency-safe document numbering, one row per document type.
 model DocumentSequence {
   id             String       @id @default(cuid())
-  type           DocumentType @unique
+  type           DocumentType
   prefix         String
   startingNumber Int          @default(1)
   nextNumber     Int          @default(1)
@@ -315,45 +488,73 @@ model DocumentSequence {
   // Year the counter currently belongs to when includeYear is on (resets on a new year).
   currentYear    Int?
   updatedAt      DateTime     @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, type])
+  @@index([companyId])
 }
 
 model PaymentAccount {
-  id               String             @id @default(cuid())
-  name             String
-  type             PaymentAccountType
-  openingBalance   Decimal            @default(0) @db.Decimal(14, 2)
-  isActive         Boolean            @default(true)
-  notes            String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  invoicePayments  InvoicePayment[]
-  purchasePayments PurchasePayment[]
-  otherIncomes     OtherIncome[]
-  expenses         Expense[]
-  posPayments      PosPayment[]
-  posRegisters     PosRegister[]
-  customerAdvances CustomerAdvance[]
-  advanceRefunds   CustomerAdvanceRefund[]
+  id                     String                  @id @default(cuid())
+  name                   String
+  type                   PaymentAccountType
+  openingBalance         Decimal                 @default(0) @db.Decimal(14, 2)
+  isActive               Boolean                 @default(true)
+  notes                  String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  invoicePayments        InvoicePayment[]
+  purchasePayments       PurchasePayment[]
+  otherIncomes           OtherIncome[]
+  expenses               Expense[]
+  posPayments            PosPayment[]
+  posRegisters           PosRegister[]
+  customerAdvances       CustomerAdvance[]
+  advanceRefunds         CustomerAdvanceRefund[]
+  supplierAdvances       SupplierAdvance[]
+  supplierAdvanceRefunds SupplierAdvanceRefund[]
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([isActive])
+  @@index([companyId])
 }
 
 model NotificationSetting {
   id               String           @id @default(cuid())
-  type             NotificationType @unique
+  type             NotificationType
   enabled          Boolean          @default(true)
   inApp            Boolean          @default(true)
   email            Boolean          @default(false)
   recipientUserIds String[]         @default([])
   updatedAt        DateTime         @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, type])
+  @@index([companyId])
 }
 
 model EmailTemplate {
   id        String           @id @default(cuid())
-  key       EmailTemplateKey @unique
+  key       EmailTemplateKey
   subject   String
   body      String
   updatedAt DateTime         @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, key])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -394,11 +595,11 @@ model Customer {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  documents  CustomerDocument[]
-  quotations Quotation[]
-  invoices   Invoice[]
-  advances   CustomerAdvance[]
-  posSales   PosSale[]
+  documents    CustomerDocument[]
+  quotations   Quotation[]
+  invoices     Invoice[]
+  advances     CustomerAdvance[]
+  posSales     PosSale[]
   appointments Appointment[]
   memberships  Membership[]
   creditNotes  CreditNote[]
@@ -407,14 +608,19 @@ model Customer {
   rentals      Rental[]
   /// The prices this customer gets. Without one they pay the default list, or the catalogue.
   priceListId  String?
-  priceList    PriceList?    @relation(fields: [priceListId], references: [id], onDelete: SetNull)
-  purchases  Purchase[]
-  projects   Project[]
+  priceList    PriceList?         @relation(fields: [priceListId], references: [id], onDelete: SetNull)
+  purchases    Purchase[]
+  projects     Project[]
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([name])
   @@index([email])
   @@index([phone])
   @@index([type])
+  @@index([companyId])
 }
 
 model CustomerDocument {
@@ -429,7 +635,12 @@ model CustomerDocument {
   uploadedById String?
   createdAt    DateTime              @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([customerId])
+  @@index([companyId])
 }
 
 model Supplier {
@@ -455,11 +666,18 @@ model Supplier {
   documents          SupplierDocument[]
   supplierQuotations SupplierQuotation[]
   purchases          Purchase[]
+  advances           SupplierAdvance[]
+  purchaseReturns    PurchaseReturn[]
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([name])
   @@index([email])
   @@index([phone])
   @@index([type])
+  @@index([companyId])
 }
 
 model SupplierDocument {
@@ -474,7 +692,12 @@ model SupplierDocument {
   uploadedById String?
   createdAt    DateTime              @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([supplierId])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +724,7 @@ enum InvoiceStatus {
 
 model Quotation {
   id         String          @id @default(cuid())
-  number     String          @unique
+  number     String
   customerId String
   customer   Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
   date       DateTime        @db.Date
@@ -528,10 +751,16 @@ model Quotation {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([customerId])
   @@index([status])
   @@index([projectId])
   @@index([date])
+  @@index([companyId])
 }
 
 model QuotationItem {
@@ -549,7 +778,12 @@ model QuotationItem {
   lineVat         Decimal   @db.Decimal(14, 2)
   lineTotal       Decimal   @db.Decimal(14, 2)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([quotationId])
+  @@index([companyId])
 }
 
 model QuotationAttachment {
@@ -562,12 +796,17 @@ model QuotationAttachment {
   size        Int
   createdAt   DateTime  @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([quotationId])
+  @@index([companyId])
 }
 
 model Invoice {
   id          String        @id @default(cuid())
-  number      String        @unique
+  number      String
   customerId  String
   customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
   quotationId String?       @unique
@@ -605,32 +844,43 @@ model Invoice {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([customerId])
   @@index([status])
   @@index([date])
   @@index([projectId])
   @@index([dueDate])
+  @@index([companyId])
 }
 
 model InvoiceItem {
-  id              String  @id @default(cuid())
-  invoiceId       String
-  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  sortOrder       Int     @default(0)
-  description     String
-  quantity        Decimal @db.Decimal(12, 2)
-  unitPrice       Decimal @db.Decimal(14, 2)
-  discountPercent Decimal @default(0) @db.Decimal(5, 2)
-  vatRate         Decimal @default(0) @db.Decimal(5, 2)
-  lineSubtotal    Decimal @db.Decimal(14, 2)
-  lineDiscount    Decimal @db.Decimal(14, 2)
-  lineVat         Decimal @db.Decimal(14, 2)
-  lineTotal       Decimal @db.Decimal(14, 2)
+  id               String           @id @default(cuid())
+  invoiceId        String
+  invoice          Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  sortOrder        Int              @default(0)
+  description      String
+  quantity         Decimal          @db.Decimal(12, 2)
+  unitPrice        Decimal          @db.Decimal(14, 2)
+  discountPercent  Decimal          @default(0) @db.Decimal(5, 2)
+  vatRate          Decimal          @default(0) @db.Decimal(5, 2)
+  lineSubtotal     Decimal          @db.Decimal(14, 2)
+  lineDiscount     Decimal          @db.Decimal(14, 2)
+  lineVat          Decimal          @db.Decimal(14, 2)
+  lineTotal        Decimal          @db.Decimal(14, 2)
   /// Already credited back; caps any later credit note against this line.
-  creditedQuantity Decimal @default(0) @db.Decimal(12, 2)
+  creditedQuantity Decimal          @default(0) @db.Decimal(12, 2)
   creditNoteItems  CreditNoteItem[]
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([invoiceId])
+  @@index([companyId])
 }
 
 model InvoiceAttachment {
@@ -643,36 +893,56 @@ model InvoiceAttachment {
   size      Int
   createdAt DateTime @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([invoiceId])
+  @@index([companyId])
 }
 
 // Money received against an invoice. Never deleted; increases the chosen payment account.
 model InvoicePayment {
-  id               String         @id @default(cuid())
-  number           String         @unique
-  invoiceId        String
-  invoice          Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  id                String           @id @default(cuid())
+  number            String
+  invoiceId         String
+  invoice           Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
   /// Set on a refund: a negative amount, given back because of this credit note.
-  creditNoteId     String?
-  creditNote       CreditNote?    @relation(fields: [creditNoteId], references: [id], onDelete: SetNull)
+  creditNoteId      String?
+  creditNote        CreditNote?      @relation(fields: [creditNoteId], references: [id], onDelete: SetNull)
   /// Set when the invoice was settled out of money the customer had already paid in advance.
   /// Finance and account balances **exclude** these rows: the cash arrived with the advance, and
   /// counting it again here would show the same money twice.
   customerAdvanceId String?
   customerAdvance   CustomerAdvance? @relation(fields: [customerAdvanceId], references: [id], onDelete: Restrict)
-  amount           Decimal        @db.Decimal(14, 2)
-  date             DateTime       @db.Date
-  paymentAccountId String
-  paymentAccount   PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
-  reference        String?
-  notes            String?
-  createdById      String?
-  createdAt        DateTime       @default(now())
+  amount            Decimal          @db.Decimal(14, 2)
+  date              DateTime         @db.Date
+  paymentAccountId  String
+  paymentAccount    PaymentAccount   @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  reference         String?
+  notes             String?
+  createdById       String?
+  createdAt         DateTime         @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([invoiceId])
   @@index([paymentAccountId])
   @@index([customerAdvanceId])
   @@index([date])
+  @@index([companyId])
+}
+
+enum SupplierAdvanceStatus {
+  /// Money paid out, with some or all of it not yet put against a bill.
+  OPEN
+  /// Every riyal has been put against a purchase or come back.
+  SETTLED
+  /// Keyed in error and withdrawn. The record stays; the money comes back into Finance.
+  CANCELLED
 }
 
 enum CustomerAdvanceStatus {
@@ -688,19 +958,19 @@ enum CustomerAdvanceStatus {
 /// retainer, payment up front. The cash arrives **here**, which is why this row is what Finance
 /// counts: applying it to an invoice later moves nothing, it only decides what the money settles.
 model CustomerAdvance {
-  id               String                @id @default(cuid())
-  number           String                @unique
+  id               String                  @id @default(cuid())
+  number           String
   customerId       String
-  customer         Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  date             DateTime              @db.Date
-  amount           Decimal               @db.Decimal(14, 2)
+  customer         Customer                @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  date             DateTime                @db.Date
+  amount           Decimal                 @db.Decimal(14, 2)
   /// Kept in step with the payment rows this advance has funded, so the balance is one read.
-  appliedTotal     Decimal               @default(0) @db.Decimal(14, 2)
+  appliedTotal     Decimal                 @default(0) @db.Decimal(14, 2)
   /// Unused money handed back. It leaves on its own date, so it is its own row, not a negative here.
-  refundedTotal    Decimal               @default(0) @db.Decimal(14, 2)
-  status           CustomerAdvanceStatus @default(OPEN)
+  refundedTotal    Decimal                 @default(0) @db.Decimal(14, 2)
+  status           CustomerAdvanceStatus   @default(OPEN)
   paymentAccountId String
-  paymentAccount   PaymentAccount        @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  paymentAccount   PaymentAccount          @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
   reference        String?
   notes            String?
   cancelledAt      DateTime?
@@ -710,13 +980,19 @@ model CustomerAdvance {
   refunds          CustomerAdvanceRefund[]
   createdById      String?
   createdByName    String
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([customerId])
   @@index([paymentAccountId])
   @@index([date])
   @@index([status])
+  @@index([companyId])
 }
 
 /// Unused advance money given back. Separate from the advance because Finance is cash-based: the
@@ -734,9 +1010,14 @@ model CustomerAdvanceRefund {
   createdByName    String
   createdAt        DateTime        @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([advanceId])
   @@index([paymentAccountId])
   @@index([date])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -758,11 +1039,13 @@ enum PurchaseStatus {
   PARTIALLY_PAID
   PAID
   OVERDUE
+  /// Settled by goods going back rather than by money. Never reads as Paid: nothing was paid.
+  CREDITED
 }
 
 model SupplierQuotation {
   id                String                  @id @default(cuid())
-  number            String                  @unique
+  number            String
   supplierId        String
   supplier          Supplier                @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   supplierReference String?
@@ -787,9 +1070,15 @@ model SupplierQuotation {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([supplierId])
   @@index([status])
   @@index([date])
+  @@index([companyId])
 }
 
 model SupplierQuotationItem {
@@ -807,7 +1096,12 @@ model SupplierQuotationItem {
   lineVat             Decimal           @db.Decimal(14, 2)
   lineTotal           Decimal           @db.Decimal(14, 2)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([supplierQuotationId])
+  @@index([companyId])
 }
 
 model SupplierQuotationAttachment {
@@ -820,12 +1114,17 @@ model SupplierQuotationAttachment {
   size                Int
   createdAt           DateTime          @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([supplierQuotationId])
+  @@index([companyId])
 }
 
 model Purchase {
   id                  String             @id @default(cuid())
-  number              String             @unique
+  number              String
   supplierId          String
   supplier            Supplier           @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   supplierQuotationId String?            @unique
@@ -847,6 +1146,9 @@ model Purchase {
   discountTotal Decimal @default(0) @db.Decimal(14, 2)
   vatTotal      Decimal @default(0) @db.Decimal(14, 2)
   grandTotal    Decimal @default(0) @db.Decimal(14, 2)
+  /// What has gone back to the supplier, counting only the returns that still stand. What is
+  /// owed is `grandTotal - paidTotal - creditedTotal`, exactly as on an invoice.
+  creditedTotal Decimal @default(0) @db.Decimal(14, 2)
   paidTotal     Decimal @default(0) @db.Decimal(14, 2)
 
   notes      String?
@@ -856,43 +1158,59 @@ model Purchase {
   attachments PurchaseAttachment[]
   payments    PurchasePayment[]
   receipts    PurchaseReceipt[]
+  returns     PurchaseReturn[]
 
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([supplierId])
   @@index([customerId])
   @@index([projectId])
   @@index([status])
   @@index([date])
   @@index([dueDate])
+  @@index([companyId])
 }
 
 model PurchaseItem {
-  id              String   @id @default(cuid())
-  purchaseId      String
-  purchase        Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  sortOrder       Int      @default(0)
-  description     String
-  quantity        Decimal  @db.Decimal(12, 2)
-  unitPrice       Decimal  @db.Decimal(14, 2)
-  discountPercent Decimal  @default(0) @db.Decimal(5, 2)
-  vatRate         Decimal  @default(0) @db.Decimal(5, 2)
-  lineSubtotal    Decimal  @db.Decimal(14, 2)
-  lineDiscount    Decimal  @db.Decimal(14, 2)
-  lineVat         Decimal  @db.Decimal(14, 2)
-  lineTotal       Decimal  @db.Decimal(14, 2)
+  id               String                @id @default(cuid())
+  purchaseId       String
+  purchase         Purchase              @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  sortOrder        Int                   @default(0)
+  description      String
+  quantity         Decimal               @db.Decimal(12, 2)
+  unitPrice        Decimal               @db.Decimal(14, 2)
+  discountPercent  Decimal               @default(0) @db.Decimal(5, 2)
+  vatRate          Decimal               @default(0) @db.Decimal(5, 2)
+  lineSubtotal     Decimal               @db.Decimal(14, 2)
+  lineDiscount     Decimal               @db.Decimal(14, 2)
+  lineVat          Decimal               @db.Decimal(14, 2)
+  lineTotal        Decimal               @db.Decimal(14, 2)
   /// The catalogue item this line buys, when it buys one. Set when the line is first received,
   /// and remembered afterwards. Free-text lines (rent, courier, fees) never have one.
-  variantId       String?
-  variant         ItemVariant? @relation("PurchasedItem", fields: [variantId], references: [id], onDelete: SetNull)
+  variantId        String?
+  variant          ItemVariant?          @relation("PurchasedItem", fields: [variantId], references: [id], onDelete: SetNull)
   /// How much of the line has physically arrived; caps any later receipt.
-  receivedQuantity Decimal @default(0) @db.Decimal(12, 2)
-  receiptItems    PurchaseReceiptItem[]
+  receivedQuantity Decimal               @default(0) @db.Decimal(12, 2)
+  /// How much has gone back to the supplier. Only what arrived can go back, so this is
+  /// capped by `receivedQuantity`, exactly as that is capped by `quantity`.
+  returnedQuantity Decimal               @default(0) @db.Decimal(12, 2)
+  receiptItems     PurchaseReceiptItem[]
+  returnItems      PurchaseReturnItem[]
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([purchaseId])
   @@index([variantId])
+  @@index([companyId])
 }
 
 model PurchaseAttachment {
@@ -905,27 +1223,116 @@ model PurchaseAttachment {
   size       Int
   createdAt  DateTime @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([purchaseId])
+  @@index([companyId])
 }
 
 // Money paid to a supplier against a purchase. Never deleted; decreases the chosen payment account.
 model PurchasePayment {
-  id               String         @id @default(cuid())
-  number           String         @unique
-  purchaseId       String
-  purchase         Purchase       @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
-  amount           Decimal        @db.Decimal(14, 2)
-  date             DateTime       @db.Date
-  paymentAccountId String
-  paymentAccount   PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
-  reference        String?
-  notes            String?
-  createdById      String?
-  createdAt        DateTime       @default(now())
+  id                String           @id @default(cuid())
+  number            String
+  purchaseId        String
+  purchase          Purchase         @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  /// Set when this payment was funded by money already paid to the supplier in advance. Finance
+  /// **skips** these rows: the cash left when the prepayment was made, and is counted there.
+  supplierAdvanceId String?
+  supplierAdvance   SupplierAdvance? @relation(fields: [supplierAdvanceId], references: [id], onDelete: Restrict)
+  /// Set when this row is money coming **back** from the supplier against a return. Negative,
+  /// so it nets off what was paid without a second path through Finance.
+  purchaseReturnId  String?
+  purchaseReturn    PurchaseReturn?  @relation(fields: [purchaseReturnId], references: [id], onDelete: Restrict)
+  amount            Decimal          @db.Decimal(14, 2)
+  date              DateTime         @db.Date
+  paymentAccountId  String
+  paymentAccount    PaymentAccount   @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  reference         String?
+  notes             String?
+  createdById       String?
+  createdAt         DateTime         @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([purchaseId])
+  @@index([supplierAdvanceId])
+  @@index([purchaseReturnId])
   @@index([paymentAccountId])
   @@index([date])
+  @@index([companyId])
+}
+
+/// Money paid to a supplier before there is a bill to put it against — a deposit on an order, a
+/// payment up front. The mirror of `CustomerAdvance`, and it carries the same single rule: **the
+/// cash leaves once, so Finance counts it once.** This row *is* the money-out event, on the day
+/// the money left; applying it to a purchase moves nothing and writes a payment row Finance skips.
+model SupplierAdvance {
+  id               String                  @id @default(cuid())
+  number           String
+  supplierId       String
+  supplier         Supplier                @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  date             DateTime                @db.Date
+  amount           Decimal                 @db.Decimal(14, 2)
+  /// Kept in step with the payment rows this prepayment has funded, so the balance is one read.
+  appliedTotal     Decimal                 @default(0) @db.Decimal(14, 2)
+  /// Unused money the supplier sent back. It arrives on its own date, so it is its own row.
+  refundedTotal    Decimal                 @default(0) @db.Decimal(14, 2)
+  status           SupplierAdvanceStatus   @default(OPEN)
+  paymentAccountId String
+  paymentAccount   PaymentAccount          @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  reference        String?
+  notes            String?
+  cancelledAt      DateTime?
+  cancelReason     String?
+  /// The purchase payments this prepayment paid for.
+  payments         PurchasePayment[]
+  refunds          SupplierAdvanceRefund[]
+  createdById      String?
+  createdByName    String
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
+  @@index([supplierId])
+  @@index([paymentAccountId])
+  @@index([date])
+  @@index([status])
+  @@index([companyId])
+}
+
+/// Unused prepayment money the supplier sent back. Separate from the prepayment because Finance is
+/// cash-based: the money returned on *this* date, which may be a different period from the one it
+/// left in.
+model SupplierAdvanceRefund {
+  id               String          @id @default(cuid())
+  advanceId        String
+  advance          SupplierAdvance @relation(fields: [advanceId], references: [id], onDelete: Cascade)
+  amount           Decimal         @db.Decimal(14, 2)
+  date             DateTime        @db.Date
+  paymentAccountId String
+  paymentAccount   PaymentAccount  @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  reference        String?
+  createdById      String?
+  createdByName    String
+  createdAt        DateTime        @default(now())
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([advanceId])
+  @@index([paymentAccountId])
+  @@index([date])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -948,7 +1355,7 @@ enum ProjectStatus {
 
 model Project {
   id                     String        @id @default(cuid())
-  code                   String        @unique
+  code                   String
   customerId             String
   customer               Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
   name                   String
@@ -968,9 +1375,15 @@ model Project {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, code])
   @@index([customerId])
   @@index([status])
   @@index([name])
+  @@index([companyId])
 }
 
 model ProjectDocument {
@@ -984,7 +1397,12 @@ model ProjectDocument {
   uploadedById String?
   createdAt    DateTime @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([projectId])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,13 +1425,18 @@ model FinanceCategory {
   incomes  OtherIncome[]
   expenses Expense[]
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([kind, name])
+  @@index([companyId])
 }
 
 // Money received that is not a customer invoice payment. Increases the chosen account.
 model OtherIncome {
   id               String          @id @default(cuid())
-  number           String          @unique
+  number           String
   categoryId       String
   category         FinanceCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   amount           Decimal         @db.Decimal(14, 2)
@@ -1029,18 +1452,32 @@ model OtherIncome {
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([date])
   @@index([categoryId])
   @@index([paymentAccountId])
+  @@index([companyId])
 }
 
 // Company expense that is not a supplier purchase payment. Decreases the chosen account.
 model Expense {
   id               String          @id @default(cuid())
-  number           String          @unique
+  number           String
   categoryId       String
   category         FinanceCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  /// What was actually paid, VAT included. This is the figure that left the bank, so it is
+  /// what money-out counts — unchanged by any of the VAT fields below.
   amount           Decimal         @db.Decimal(14, 2)
+  /// The rate on the supplier's tax invoice, when there was one. Zero means no VAT was
+  /// charged, or none that can be reclaimed, which is the default and the common case.
+  vatRate          Decimal         @default(0) @db.Decimal(5, 2)
+  /// How much of `amount` was VAT. Stored rather than derived so a rate changed later
+  /// never rewrites what was reclaimed on a return already filed.
+  vatAmount        Decimal         @default(0) @db.Decimal(14, 2)
   date             DateTime        @db.Date
   paymentAccountId String
   paymentAccount   PaymentAccount  @relation(fields: [paymentAccountId], references: [id], onDelete: Restrict)
@@ -1053,9 +1490,15 @@ model Expense {
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([date])
   @@index([categoryId])
   @@index([paymentAccountId])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1073,15 +1516,27 @@ model Notification {
   readAt    DateTime?
   createdAt DateTime         @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([userId, readAt])
   @@index([userId, createdAt])
+  @@index([companyId])
 }
 
 // Remembers time-based events already notified (e.g. "invoice X is overdue") so they fire once.
 model NotificationEvent {
   id        String   @id @default(cuid())
-  key       String   @unique
+  key       String
   createdAt DateTime @default(now())
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, key])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1125,47 +1580,62 @@ enum PosBusinessType {
 /// One row per module: the commercial on/off switch, managed by the BigHawk Super Admin.
 model ModuleSetting {
   id        String    @id @default(cuid())
-  module    AppModule @unique
+  module    AppModule
   enabled   Boolean   @default(false)
   enabledAt DateTime?
   updatedAt DateTime  @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, module])
+  @@index([companyId])
 }
 
 /// A physical location. Every POS register, shift and sale will hang off a branch.
 model Branch {
-  id        String            @id @default(cuid())
-  code      String            @unique
-  name      String
-  phone     String?
-  city      String?
-  address   String?
-  vatNumber String?
-  isActive  Boolean           @default(true)
+  id               String             @id @default(cuid())
+  code             String
+  name             String
+  phone            String?
+  city             String?
+  address          String?
+  vatNumber        String?
+  isActive         Boolean            @default(true)
   // The branch used when nobody has chosen one; exactly one branch carries this.
-  isDefault Boolean           @default(false)
-  posConfig PosConfiguration?
-  stockLevels    StockLevel[]
-  stockMovements StockMovement[]
-  posRegisters   PosRegister[]
-  posShifts      PosShift[]
-  posSales       PosSale[]
-  posReturns     PosReturn[]
-  posTables      PosTable[]
-  posKitchen     PosKitchenTicket[]
-  posCounters    PosOrderCounter[]
-  staff          StaffMember[]
-  appointments   Appointment[]
-  memberships    Membership[]
-  workOrders     WorkOrder[]
-  ticketEvents   TicketEvent[]
-  rooms          Room[]
-  stays          Stay[]
-  rentals        Rental[]
+  isDefault        Boolean            @default(false)
+  posConfig        PosConfiguration?
+  stockLevels      StockLevel[]
+  stockMovements   StockMovement[]
+  posRegisters     PosRegister[]
+  posShifts        PosShift[]
+  posSales         PosSale[]
+  posReturns       PosReturn[]
+  posTables        PosTable[]
+  posKitchen       PosKitchenTicket[]
+  posCounters      PosOrderCounter[]
+  staff            StaffMember[]
+  users            User[]
+  appointments     Appointment[]
+  memberships      Membership[]
+  workOrders       WorkOrder[]
+  ticketEvents     TicketEvent[]
+  rooms            Room[]
+  stays            Stay[]
+  rentals          Rental[]
   purchaseReceipts PurchaseReceipt[]
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  purchaseReturns  PurchaseReturn[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, code])
   @@index([isActive])
+  @@index([companyId])
 }
 
 /// POS settings for one branch, so a company can run different industries per location.
@@ -1190,8 +1660,14 @@ model PosConfiguration {
   /// Whether the trailing digits are a weight or a money amount.
   scaleBarcodeMode    ScaleBarcodeMode @default(WEIGHT)
 
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
 }
 
 /// What the digits after the item code on a scale label mean.
@@ -1204,20 +1680,32 @@ enum ScaleBarcodeMode {
 
 /// Trail of consequential changes. Written through recordAudit() in lib/platform/audit.ts.
 model AuditLog {
-  id         String   @id @default(cuid())
-  action     String
-  entity     String
-  entityId   String?
-  summary    String
-  metadata   Json?
-  userId     String?
-  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  userName   String
-  branchId   String?
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  action    String
+  entity    String
+  entityId  String?
+  summary   String
+  metadata  Json?
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userName  String
+  branchId  String?
+  createdAt DateTime @default(now())
+  /// Done by BigHawk's own operator rather than by somebody who works for this company.
+  ///
+  /// The row still belongs to the company it affected — that is where it means something — but
+  /// the company's own people are not shown it. Only the operator sees these, across every
+  /// customer at once.
+  byPlatform Boolean @default(false)
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
   @@index([entity, entityId])
+  @@index([companyId])
+  @@index([companyId, byPlatform, createdAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -1251,7 +1739,7 @@ enum StockMovementKind {
 
 model ItemCategory {
   id          String   @id @default(cuid())
-  name        String   @unique
+  name        String
   description String?
   sortOrder   Int      @default(0)
   isActive    Boolean  @default(true)
@@ -1259,85 +1747,106 @@ model ItemCategory {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, name])
   @@index([isActive, sortOrder])
+  @@index([companyId])
 }
 
 model Item {
-  id          String        @id @default(cuid())
-  kind        ItemKind      @default(PRODUCT)
-  name        String
+  id              String              @id @default(cuid())
+  kind            ItemKind            @default(PRODUCT)
+  name            String
   /// Internal reference for the item as a whole; variants carry their own SKU and barcode.
-  code        String?       @unique
-  categoryId  String?
-  category    ItemCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  brand       String?
-  description String?
-  imageKey    String?
-  imageUrl    String?
+  code            String?
+  categoryId      String?
+  category        ItemCategory?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brand           String?
+  description     String?
+  imageKey        String?
+  imageUrl        String?
   /// pcs, kg, L, hour… free text so any trade can describe its own unit.
-  unit        String        @default("pcs")
-  salePrice   Decimal       @default(0) @db.Decimal(14, 2)
-  costPrice   Decimal       @default(0) @db.Decimal(14, 2)
+  unit            String              @default("pcs")
+  salePrice       Decimal             @default(0) @db.Decimal(14, 2)
+  costPrice       Decimal             @default(0) @db.Decimal(14, 2)
   /// null = use the company VAT rate from Settings.
-  vatRate     Decimal?      @db.Decimal(5, 2)
+  vatRate         Decimal?            @db.Decimal(5, 2)
   /// Services and non-stocked products (e.g. made to order) keep no stock levels.
-  trackStock  Boolean       @default(true)
+  trackStock      Boolean             @default(true)
   /// Service length, for industries that book time (salon, spa, repair labour).
   durationMinutes Int?
-  isActive    Boolean       @default(true)
-  variants    ItemVariant[]
-  modifierGroups ItemModifierGroup[]
-  createdById String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  isActive        Boolean             @default(true)
+  variants        ItemVariant[]
+  modifierGroups  ItemModifierGroup[]
+  createdById     String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, code])
   @@index([kind, isActive])
   @@index([categoryId])
   @@index([name])
+  @@index([companyId])
 }
 
 model ItemVariant {
-  id           String          @id @default(cuid())
-  itemId       String
-  item         Item            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  id               String                  @id @default(cuid())
+  itemId           String
+  item             Item                    @relation(fields: [itemId], references: [id], onDelete: Cascade)
   /// "Black / M", or the item name for a product sold in one form.
-  name         String
-  sku          String?         @unique
-  barcode      String?         @unique
+  name             String
+  sku              String?
+  barcode          String?
   /// Short numeric code used by scales and keypads for loose goods (a PLU).
-  plu          String?         @unique
+  plu              String?
   /// The attribute pairs that define this variant, e.g. {"Colour":"Black","Size":"M"}.
-  attributes   Json?
+  attributes       Json?
   /// null = inherit the item's price/cost.
-  salePrice    Decimal?        @db.Decimal(14, 2)
-  costPrice    Decimal?        @db.Decimal(14, 2)
-  minStock     Decimal         @default(0) @db.Decimal(14, 3)
-  reorderLevel Decimal         @default(0) @db.Decimal(14, 3)
-  isDefault    Boolean         @default(false)
-  isActive     Boolean         @default(true)
-  sortOrder    Int             @default(0)
-  stockLevels  StockLevel[]
-  movements    StockMovement[]
-  posSaleItems PosSaleItem[]
-  posReturnItems PosReturnItem[]
-  kitchenItems PosKitchenTicketItem[]
-  recipe       RecipeComponent[]       @relation("RecipeOf")
-  usedIn       RecipeComponent[]       @relation("RecipeIngredient")
-  consumed     PosSaleItemIngredient[] @relation("ConsumedBySale")
+  salePrice        Decimal?                @db.Decimal(14, 2)
+  costPrice        Decimal?                @db.Decimal(14, 2)
+  minStock         Decimal                 @default(0) @db.Decimal(14, 3)
+  reorderLevel     Decimal                 @default(0) @db.Decimal(14, 3)
+  isDefault        Boolean                 @default(false)
+  isActive         Boolean                 @default(true)
+  sortOrder        Int                     @default(0)
+  stockLevels      StockLevel[]
+  movements        StockMovement[]
+  posSaleItems     PosSaleItem[]
+  posReturnItems   PosReturnItem[]
+  kitchenItems     PosKitchenTicketItem[]
+  recipe           RecipeComponent[]       @relation("RecipeOf")
+  usedIn           RecipeComponent[]       @relation("RecipeIngredient")
+  consumed         PosSaleItemIngredient[] @relation("ConsumedBySale")
   appointmentItems AppointmentItem[]
   pricedOnLists    PriceListItem[]         @relation("PricedOnList")
   ticketEvents     TicketEvent[]           @relation("TicketItem")
   roomNights       Room[]                  @relation("RoomNightItem")
   rentals          Rental[]                @relation("RentedItem")
   purchasedOn      PurchaseItem[]          @relation("PurchasedItem")
+  returnedOn       PurchaseReturnItem[]    @relation("ReturnedItem")
   receivedOn       PurchaseReceiptItem[]   @relation("ReceivedItem")
   membershipPlans  MembershipPlan[]        @relation("MembershipPlanItem")
   coveredByPlans   MembershipPlanService[] @relation("MembershipCovers")
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, sku])
+  @@unique([companyId, barcode])
+  @@unique([companyId, plu])
   @@index([itemId, isActive])
   @@index([barcode])
+  @@index([companyId])
 }
 
 /// Current quantity of one variant at one branch. Only ever written by lib/business/inventory.ts.
@@ -1350,8 +1859,13 @@ model StockLevel {
   quantity  Decimal     @default(0) @db.Decimal(14, 3)
   updatedAt DateTime    @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([variantId, branchId])
   @@index([branchId])
+  @@index([companyId])
 }
 
 /// Append-only history of stock changes: the audit trail behind every stock level.
@@ -1375,9 +1889,14 @@ model StockMovement {
   userName      String
   createdAt     DateTime          @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([variantId, createdAt])
   @@index([branchId, createdAt])
   @@index([referenceType, referenceId])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1432,8 +1951,13 @@ model PosRegister {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([branchId, name])
   @@index([branchId, isActive])
+  @@index([companyId])
 }
 
 /// One cashier's session at a register: opening float, what happened, closing count.
@@ -1460,8 +1984,13 @@ model PosShift {
   returns      PosReturn[]
   movements    PosCashMovement[]
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([branchId, openedAt])
   @@index([registerId, status])
+  @@index([companyId])
 }
 
 /// Cash put into or taken out of the drawer during a shift (float, bank run, petty cash).
@@ -1476,45 +2005,54 @@ model PosCashMovement {
   userName  String
   createdAt DateTime            @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([shiftId])
+  @@index([companyId])
 }
 
 model PosSale {
-  id                  String        @id @default(cuid())
-  number              String        @unique
+  id                  String             @id @default(cuid())
+  number              String
+  /// The till's own id for this sale, set when it was rung up offline and replayed later.
+  /// Unique, so a replay whose answer was lost cannot create the sale a second time — a duplicate
+  /// here would be money invented. Null for every sale rung up online.
+  clientReference     String?            @unique
   branchId            String
-  branch              Branch        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  branch              Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
   registerId          String?
-  register            PosRegister?  @relation(fields: [registerId], references: [id], onDelete: SetNull)
+  register            PosRegister?       @relation(fields: [registerId], references: [id], onDelete: SetNull)
   shiftId             String?
-  shift               PosShift?     @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  shift               PosShift?          @relation(fields: [shiftId], references: [id], onDelete: SetNull)
   /// Walk-in sales have no customer; naming one links the sale to their history.
   customerId          String?
-  customer            Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customer            Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
   /// Bar tabs: the name the bill is running under when there is no table and no customer record.
   tabName             String?
   /// Counter collection number for the day, allocated only where orders are called out.
   orderNumber         Int?
   /// Dine-in only: the table this order is running on. A PARKED sale with a table is an open order.
   tableId             String?
-  table               PosTable?     @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  table               PosTable?          @relation(fields: [tableId], references: [id], onDelete: SetNull)
   /// How many people are seated, for covers reporting and for the floor plan.
   guestCount          Int?
-  status              PosSaleStatus @default(COMPLETED)
-  soldAt              DateTime      @default(now())
+  status              PosSaleStatus      @default(COMPLETED)
+  soldAt              DateTime           @default(now())
   /// Cash-basis date used by Finance, matching how invoice payments are dated.
-  date                DateTime      @db.Date
-  subtotal            Decimal       @default(0) @db.Decimal(14, 2)
-  discountTotal       Decimal       @default(0) @db.Decimal(14, 2)
-  vatTotal            Decimal       @default(0) @db.Decimal(14, 2)
-  grandTotal          Decimal       @default(0) @db.Decimal(14, 2)
+  date                DateTime           @db.Date
+  subtotal            Decimal            @default(0) @db.Decimal(14, 2)
+  discountTotal       Decimal            @default(0) @db.Decimal(14, 2)
+  vatTotal            Decimal            @default(0) @db.Decimal(14, 2)
+  grandTotal          Decimal            @default(0) @db.Decimal(14, 2)
   /// Cost of what was sold, snapshotted per line, so margin does not depend on today's costs.
-  costTotal           Decimal       @default(0) @db.Decimal(14, 2)
-  paidTotal           Decimal       @default(0) @db.Decimal(14, 2)
-  changeDue           Decimal       @default(0) @db.Decimal(14, 2)
+  costTotal           Decimal            @default(0) @db.Decimal(14, 2)
+  paidTotal           Decimal            @default(0) @db.Decimal(14, 2)
+  changeDue           Decimal            @default(0) @db.Decimal(14, 2)
   /// A discount on the whole cart, on top of any per-line discounts.
-  cartDiscountPercent Decimal       @default(0) @db.Decimal(5, 2)
-  refundedTotal       Decimal       @default(0) @db.Decimal(14, 2)
+  cartDiscountPercent Decimal            @default(0) @db.Decimal(5, 2)
+  refundedTotal       Decimal            @default(0) @db.Decimal(14, 2)
   note                String?
   cashierId           String?
   cashierName         String
@@ -1531,9 +2069,14 @@ model PosSale {
   rentalsTakenOut     Rental[]           @relation("RentalSale")
   rentalsSettled      Rental[]           @relation("RentalSettlement")
   returns             PosReturn[]
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([branchId, soldAt])
   @@index([date])
   @@index([shiftId])
@@ -1541,6 +2084,7 @@ model PosSale {
   @@index([customerId])
   @@index([tableId, status])
   @@index([branchId, date, orderNumber])
+  @@index([companyId])
 }
 
 /// A table on a branch's floor plan. Only industries with the TABLES capability use these;
@@ -1559,43 +2103,53 @@ model PosTable {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([branchId, name])
   @@index([branchId, isActive])
+  @@index([companyId])
 }
 
 model PosSaleItem {
-  id              String       @id @default(cuid())
-  saleId          String
-  sale            PosSale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  variantId       String?
-  variant         ItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  id               String                  @id @default(cuid())
+  saleId           String
+  sale             PosSale                 @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  variantId        String?
+  variant          ItemVariant?            @relation(fields: [variantId], references: [id], onDelete: SetNull)
   /// Snapshots: a receipt must still read correctly after the catalogue changes.
-  name            String
-  sku             String?
-  unit            String       @default("pcs")
-  quantity        Decimal      @db.Decimal(14, 3)
-  unitPrice       Decimal      @db.Decimal(14, 2)
-  unitCost        Decimal      @default(0) @db.Decimal(14, 2)
-  discountPercent Decimal      @default(0) @db.Decimal(5, 2)
-  vatRate         Decimal      @default(0) @db.Decimal(5, 2)
-  lineSubtotal    Decimal      @default(0) @db.Decimal(14, 2)
-  lineDiscount    Decimal      @default(0) @db.Decimal(14, 2)
-  lineVat         Decimal      @default(0) @db.Decimal(14, 2)
-  lineTotal       Decimal      @default(0) @db.Decimal(14, 2)
+  name             String
+  sku              String?
+  unit             String                  @default("pcs")
+  quantity         Decimal                 @db.Decimal(14, 3)
+  unitPrice        Decimal                 @db.Decimal(14, 2)
+  unitCost         Decimal                 @default(0) @db.Decimal(14, 2)
+  discountPercent  Decimal                 @default(0) @db.Decimal(5, 2)
+  vatRate          Decimal                 @default(0) @db.Decimal(5, 2)
+  lineSubtotal     Decimal                 @default(0) @db.Decimal(14, 2)
+  lineDiscount     Decimal                 @default(0) @db.Decimal(14, 2)
+  lineVat          Decimal                 @default(0) @db.Decimal(14, 2)
+  lineTotal        Decimal                 @default(0) @db.Decimal(14, 2)
   /// Whether this line moved stock (services and untracked products do not).
-  movedStock      Boolean      @default(false)
+  movedStock       Boolean                 @default(false)
   /// How much of this line has been returned, so a partial return cannot exceed what was sold.
-  returnedQuantity Decimal     @default(0) @db.Decimal(14, 3)
-  returnItems     PosReturnItem[]
-  modifiers       PosSaleItemModifier[]
-  ingredients     PosSaleItemIngredient[]
-  staff           PosSaleItemStaff[]
-  membershipUse   MembershipUse?
-  ticketIssued    TicketIssued?
-  sortOrder       Int          @default(0)
+  returnedQuantity Decimal                 @default(0) @db.Decimal(14, 3)
+  returnItems      PosReturnItem[]
+  modifiers        PosSaleItemModifier[]
+  ingredients      PosSaleItemIngredient[]
+  staff            PosSaleItemStaff[]
+  membershipUse    MembershipUse?
+  ticketIssued     TicketIssued?
+  sortOrder        Int                     @default(0)
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([saleId])
   @@index([variantId])
+  @@index([companyId])
 }
 
 model PosPayment {
@@ -1615,10 +2169,15 @@ model PosPayment {
   date             DateTime         @db.Date
   createdAt        DateTime         @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([saleId])
   @@index([returnId])
   @@index([date])
   @@index([paymentAccountId])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1632,7 +2191,7 @@ model PosPayment {
 
 model PosReturn {
   id            String          @id @default(cuid())
-  number        String          @unique
+  number        String
   saleId        String
   sale          PosSale         @relation(fields: [saleId], references: [id], onDelete: Restrict)
   branchId      String
@@ -1660,10 +2219,16 @@ model PosReturn {
   payments      PosPayment[]
   createdAt     DateTime        @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([saleId])
   @@index([branchId, returnedAt])
   @@index([date])
   @@index([shiftId])
+  @@index([companyId])
 }
 
 model PosReturnItem {
@@ -1691,8 +2256,13 @@ model PosReturnItem {
   restocked       Boolean      @default(false)
   sortOrder       Int          @default(0)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([returnId])
   @@index([saleItemId])
+  @@index([companyId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1708,7 +2278,7 @@ model PosReturnItem {
 
 model ModifierGroup {
   id        String              @id @default(cuid())
-  name      String              @unique
+  name      String
   /// Shown above the options at the till ("Choose a milk").
   prompt    String?
   /// How many options must be chosen: 0 makes the group optional.
@@ -1722,7 +2292,13 @@ model ModifierGroup {
   createdAt DateTime            @default(now())
   updatedAt DateTime            @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, name])
   @@index([isActive, sortOrder])
+  @@index([companyId])
 }
 
 model ModifierOption {
@@ -1737,7 +2313,12 @@ model ModifierOption {
   sortOrder  Int           @default(0)
   isActive   Boolean       @default(true)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([groupId, isActive])
+  @@index([companyId])
 }
 
 /// Which groups an item asks about, and in what order.
@@ -1749,8 +2330,13 @@ model ItemModifierGroup {
   group     ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
   sortOrder Int           @default(0)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([itemId, groupId])
   @@index([itemId])
+  @@index([companyId])
 }
 
 /// What was actually chosen on a sold line — a snapshot, like the line's name and price.
@@ -1764,7 +2350,12 @@ model PosSaleItemModifier {
   priceDelta Decimal     @default(0) @db.Decimal(14, 2)
   sortOrder  Int         @default(0)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([saleItemId])
+  @@index([companyId])
 }
 
 // --- Kitchen (the KITCHEN capability: restaurant, quick service) ---------------
@@ -1802,8 +2393,13 @@ model PosKitchenTicket {
   createdAt  DateTime               @default(now())
   updatedAt  DateTime               @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([branchId, status, sentAt])
   @@index([saleId])
+  @@index([companyId])
 }
 
 model PosKitchenTicketItem {
@@ -1823,7 +2419,12 @@ model PosKitchenTicketItem {
   signature String           @default("")
   sortOrder Int              @default(0)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([ticketId])
+  @@index([companyId])
 }
 
 // --- Recipes (the RECIPES capability: restaurant, cafe, bakery) ----------------
@@ -1846,9 +2447,14 @@ model RecipeComponent {
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([variantId, ingredientVariantId])
   @@index([variantId])
   @@index([ingredientVariantId])
+  @@index([companyId])
 }
 
 /// What a sold line actually consumed, snapshotted like its price and cost — so a void or a
@@ -1867,7 +2473,12 @@ model PosSaleItemIngredient {
   unitCost   Decimal      @default(0) @db.Decimal(14, 2)
   sortOrder  Int          @default(0)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([saleItemId])
+  @@index([companyId])
 }
 
 /// The day's collection numbers for one branch ("Order 42"), kept as a locked row per day so two
@@ -1881,7 +2492,12 @@ model PosOrderCounter {
   next      Int      @default(1)
   updatedAt DateTime @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([branchId, date])
+  @@index([companyId])
 }
 
 // --- Staff, commission and appointments (salon, spa, gym) ---------------------
@@ -1912,8 +2528,13 @@ model StaffMember {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([branchId, name])
   @@index([branchId, isActive])
+  @@index([companyId])
 }
 
 /// What one person earned on one sold line. A snapshot: the rate and the amount are kept, so a
@@ -1931,8 +2552,13 @@ model PosSaleItemStaff {
   /// Reversed by a void or a return, so a refunded service is not still owed.
   reversedAmount    Decimal      @default(0) @db.Decimal(14, 2)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([saleItemId])
   @@index([staffId])
+  @@index([companyId])
 }
 
 /// Where a booking is in its day.
@@ -1973,10 +2599,15 @@ model Appointment {
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([branchId, startAt])
   @@index([staffId, startAt])
   @@index([status])
   @@index([customerId])
+  @@index([companyId])
 }
 
 /// One service on a booking, priced and timed when it was booked.
@@ -1995,7 +2626,12 @@ model AppointmentItem {
   staff           StaffMember? @relation(fields: [staffId], references: [id], onDelete: SetNull)
   sortOrder       Int          @default(0)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([appointmentId])
+  @@index([companyId])
 }
 
 // --- Memberships (salon, spa, gym) -------------------------------------------
@@ -2007,7 +2643,7 @@ model AppointmentItem {
 /// what the customer gets for it.
 model MembershipPlan {
   id              String                  @id @default(cuid())
-  name            String                  @unique
+  name            String
   description     String?
   /// What is actually rung up at the till when the plan is sold.
   variantId       String
@@ -2025,7 +2661,13 @@ model MembershipPlan {
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, name])
   @@index([isActive])
+  @@index([companyId])
 }
 
 model MembershipPlanService {
@@ -2035,7 +2677,12 @@ model MembershipPlanService {
   variantId String
   variant   ItemVariant    @relation("MembershipCovers", fields: [variantId], references: [id], onDelete: Cascade)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([planId, variantId])
+  @@index([companyId])
 }
 
 enum MembershipStatus {
@@ -2071,28 +2718,37 @@ model Membership {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([customerId, status])
   @@index([branchId, endDate])
+  @@index([companyId])
 }
 
 /// One session drawn down, tied to the sale line that used it — so a void or a return puts it back.
 model MembershipUse {
-  id           String      @id @default(cuid())
-  membershipId String
-  membership   Membership  @relation(fields: [membershipId], references: [id], onDelete: Cascade)
-  saleItemId   String      @unique
-  saleItem     PosSaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
-  name         String
+  id               String      @id @default(cuid())
+  membershipId     String
+  membership       Membership  @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  saleItemId       String      @unique
+  saleItem         PosSaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+  name             String
   /// Sessions taken by this line, which is the quantity sold.
-  sessions     Int         @default(1)
-  usedAt       DateTime    @default(now())
+  sessions         Int         @default(1)
+  usedAt           DateTime    @default(now())
   /// How many of them have been put back by a void or a return. The row stays, so "used then
   /// given back" reads differently from "never used".
-  returnedSessions Int     @default(0)
+  returnedSessions Int         @default(0)
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([membershipId])
+  @@index([companyId])
 }
-
 
 // --- Price lists (the PRICE_LISTS capability: wholesale, B2B) ------------------
 
@@ -2103,7 +2759,7 @@ model MembershipUse {
 /// server says a line costs.
 model PriceList {
   id          String          @id @default(cuid())
-  name        String          @unique
+  name        String
   description String?
   /// What everyone without a list of their own pays. At most one list carries it.
   isDefault   Boolean         @default(false)
@@ -2113,7 +2769,13 @@ model PriceList {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, name])
   @@index([isActive])
+  @@index([companyId])
 }
 
 /// What one item costs on one list: a fixed price, a percentage off the catalogue, or both as a
@@ -2132,8 +2794,13 @@ model PriceListItem {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([listId, variantId])
   @@index([variantId])
+  @@index([companyId])
 }
 
 /// Buy this many or more, pay this. The highest tier the quantity reaches is the one that applies.
@@ -2144,9 +2811,13 @@ model PriceTier {
   minQuantity     Decimal       @db.Decimal(14, 3)
   price           Decimal       @db.Decimal(14, 2)
 
-  @@unique([priceListItemId, minQuantity])
-}
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
+  @@unique([priceListItemId, minQuantity])
+  @@index([companyId])
+}
 
 // --- Work orders (the WORK_ORDERS capability: repair shops) -------------------
 
@@ -2167,7 +2838,7 @@ enum WorkOrderStatus {
 /// sale, linked here — a work order is the *work*, not a second kind of invoice.
 model WorkOrder {
   id            String          @id @default(cuid())
-  number        String          @unique
+  number        String
   branchId      String
   branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
   customerId    String?
@@ -2198,8 +2869,14 @@ model WorkOrder {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([branchId, status])
   @@index([customerId])
+  @@index([companyId])
 }
 
 // --- Tickets (the TICKETS capability: cinema, venues) -------------------------
@@ -2223,8 +2900,13 @@ model TicketEvent {
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([branchId, startsAt])
   @@index([isActive])
+  @@index([companyId])
 }
 
 /// Places taken by one sold line. Returned places come back, so capacity is always what is left.
@@ -2239,7 +2921,12 @@ model TicketIssued {
   returned   Int         @default(0)
   issuedAt   DateTime    @default(now())
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([eventId])
+  @@index([companyId])
 }
 
 // --- Rooms (the ROOMS capability: hotels) ------------------------------------
@@ -2269,15 +2956,20 @@ model Room {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@unique([branchId, name])
   @@index([branchId, isActive])
+  @@index([companyId])
 }
 
 /// One guest in one room between two dates. The folio is a held POS sale pointing at the stay, so
 /// bar and restaurant charges reach it through the same till as everything else.
 model Stay {
   id            String     @id @default(cuid())
-  number        String     @unique
+  number        String
   branchId      String
   branch        Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
   roomId        String
@@ -2302,9 +2994,15 @@ model Stay {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([branchId, checkIn])
   @@index([roomId, checkIn])
   @@index([status])
+  @@index([companyId])
 }
 
 // --- Rentals (the RENTALS capability: equipment, venues) ----------------------
@@ -2322,7 +3020,7 @@ enum RentalStatus {
 /// about the thing itself, and the stock that left the shelf.
 model Rental {
   id            String       @id @default(cuid())
-  number        String       @unique
+  number        String
   branchId      String
   branch        Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
   customerId    String?
@@ -2354,11 +3052,16 @@ model Rental {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([branchId, status])
   @@index([dueAt])
   @@index([customerId])
+  @@index([companyId])
 }
-
 
 // ---------------------------------------------------------------------------
 // Credit notes: reversing part or all of an issued invoice
@@ -2378,39 +3081,45 @@ enum CreditNoteStatus {
 /// Money only moves if some is actually given back, and then it moves as a **negative
 /// InvoicePayment** tagged with this note — the same path the money came in on.
 model CreditNote {
-  id             String           @id @default(cuid())
-  number         String           @unique
-  invoiceId      String
-  invoice        Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  id              String           @id @default(cuid())
+  number          String
+  invoiceId       String
+  invoice         Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
   /// Copied from the invoice so the note can be listed and reported on by customer.
-  customerId     String
-  customer       Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  date           DateTime         @db.Date
+  customerId      String
+  customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  date            DateTime         @db.Date
   /// Why it was issued — a credit note without a reason is a hole in the books.
-  reason         String
-  subtotal       Decimal          @default(0) @db.Decimal(14, 2)
-  discountTotal  Decimal          @default(0) @db.Decimal(14, 2)
-  vatTotal       Decimal          @default(0) @db.Decimal(14, 2)
-  grandTotal     Decimal          @default(0) @db.Decimal(14, 2)
+  reason          String
+  subtotal        Decimal          @default(0) @db.Decimal(14, 2)
+  discountTotal   Decimal          @default(0) @db.Decimal(14, 2)
+  vatTotal        Decimal          @default(0) @db.Decimal(14, 2)
+  grandTotal      Decimal          @default(0) @db.Decimal(14, 2)
   /// How much of it was handed back as money; the rest reduces what the customer owes.
-  refundedTotal  Decimal          @default(0) @db.Decimal(14, 2)
-  status         CreditNoteStatus @default(ISSUED)
-  internalNotes  String?
-  cancelledAt    DateTime?
+  refundedTotal   Decimal          @default(0) @db.Decimal(14, 2)
+  status          CreditNoteStatus @default(ISSUED)
+  internalNotes   String?
+  cancelledAt     DateTime?
   cancelledByName String?
-  cancelReason   String?
-  items          CreditNoteItem[]
+  cancelReason    String?
+  items           CreditNoteItem[]
   /// The refund rows this note caused, if any.
-  payments       InvoicePayment[]
-  createdById    String?
-  createdByName  String
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  payments        InvoicePayment[]
+  createdById     String?
+  createdByName   String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([invoiceId])
   @@index([customerId])
   @@index([date])
   @@index([status])
+  @@index([companyId])
 }
 
 /// One credited line, snapshotted from the invoice line it reverses.
@@ -2432,13 +3141,107 @@ model CreditNoteItem {
   lineVat         Decimal      @db.Decimal(14, 2)
   lineTotal       Decimal      @db.Decimal(14, 2)
 
-  @@index([creditNoteId])
-}
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
+  @@index([creditNoteId])
+  @@index([companyId])
+}
 
 // ---------------------------------------------------------------------------
 // Goods receipts: what physically arrived from a purchase
 // ---------------------------------------------------------------------------
+
+/// Goods going back to a supplier: the mirror of a credit note, and the only thing that writes a
+/// `PURCHASE_RETURN` stock movement.
+///
+/// Two rules carry it, both borrowed from credit notes because they were right there:
+/// amounts are recomputed from the purchase's own lines by `calcLine` rather than apportioned, so
+/// the VAT reverses exactly as it was charged; and money only moves if the supplier actually sends
+/// some back, as a **negative `PurchasePayment`** tagged with the return — the rows the money went
+/// out on. A credit left against the account writes no payment row at all: nothing moved, the
+/// business simply owes less.
+model PurchaseReturn {
+  id            String               @id @default(cuid())
+  number        String
+  purchaseId    String
+  purchase      Purchase             @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  supplierId    String
+  supplier      Supplier             @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  /// The branch the goods physically leave. Stock has to come off a shelf somewhere.
+  branchId      String
+  branch        Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  date          DateTime             @db.Date
+  reason        String
+  status        PurchaseReturnStatus @default(ISSUED)
+  subtotal      Decimal              @db.Decimal(14, 2)
+  discountTotal Decimal              @db.Decimal(14, 2)
+  vatTotal      Decimal              @db.Decimal(14, 2)
+  grandTotal    Decimal              @db.Decimal(14, 2)
+  /// Money the supplier actually sent back, as opposed to credit left on the account.
+  refundedTotal Decimal              @default(0) @db.Decimal(14, 2)
+  internalNotes String?
+  items         PurchaseReturnItem[]
+  /// The negative payment rows this return produced, if any money came back.
+  payments      PurchasePayment[]
+  cancelledAt   DateTime?
+  cancelReason  String?
+  createdById   String?
+  createdByName String
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
+  @@index([purchaseId])
+  @@index([supplierId])
+  @@index([branchId])
+  @@index([date])
+  @@index([status])
+  @@index([companyId])
+}
+
+model PurchaseReturnItem {
+  id              String         @id @default(cuid())
+  returnId        String
+  return          PurchaseReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  purchaseItemId  String
+  purchaseItem    PurchaseItem   @relation(fields: [purchaseItemId], references: [id], onDelete: Restrict)
+  /// The catalogue item whose stock moved. Null when the purchase line was never stock —
+  /// a charge rather than a thing on a shelf.
+  variantId       String?
+  variant         ItemVariant?   @relation("ReturnedItem", fields: [variantId], references: [id], onDelete: SetNull)
+  sortOrder       Int            @default(0)
+  description     String
+  quantity        Decimal        @db.Decimal(12, 2)
+  unitPrice       Decimal        @db.Decimal(14, 2)
+  discountPercent Decimal        @default(0) @db.Decimal(5, 2)
+  vatRate         Decimal        @default(0) @db.Decimal(5, 2)
+  lineSubtotal    Decimal        @db.Decimal(14, 2)
+  lineDiscount    Decimal        @db.Decimal(14, 2)
+  lineVat         Decimal        @db.Decimal(14, 2)
+  lineTotal       Decimal        @db.Decimal(14, 2)
+
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([returnId])
+  @@index([purchaseItemId])
+  @@index([variantId])
+  @@index([companyId])
+}
+
+enum PurchaseReturnStatus {
+  /// The goods have gone back and the purchase owes less.
+  ISSUED
+  /// Raised in error and withdrawn. The record stays; the stock and the credit come back.
+  CANCELLED
+}
 
 enum PurchaseReceiptStatus {
   ISSUED
@@ -2453,30 +3256,36 @@ enum PurchaseReceiptStatus {
 /// cost that was actually paid. The stock itself moves through `applyStockMovement`, like every
 /// other quantity in this app.
 model PurchaseReceipt {
-  id             String                @id @default(cuid())
-  number         String                @unique
-  purchaseId     String
-  purchase       Purchase              @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  id              String                @id @default(cuid())
+  number          String
+  purchaseId      String
+  purchase        Purchase              @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
   /// Stock is per branch, so a delivery always lands somewhere.
-  branchId       String
-  branch         Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  receivedAt     DateTime              @default(now())
+  branchId        String
+  branch          Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  receivedAt      DateTime              @default(now())
   /// Cash-basis date for the stock movement, matching how the rest of the app dates things.
-  date           DateTime              @db.Date
-  status         PurchaseReceiptStatus @default(ISSUED)
-  note           String?
-  cancelReason   String?
-  cancelledAt    DateTime?
+  date            DateTime              @db.Date
+  status          PurchaseReceiptStatus @default(ISSUED)
+  note            String?
+  cancelReason    String?
+  cancelledAt     DateTime?
   cancelledByName String?
-  receivedById   String?
-  receivedByName String
-  items          PurchaseReceiptItem[]
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
+  receivedById    String?
+  receivedByName  String
+  items           PurchaseReceiptItem[]
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, number])
   @@index([purchaseId])
   @@index([branchId, receivedAt])
   @@index([status])
+  @@index([companyId])
 }
 
 /// One line of a delivery, snapshotted: what arrived, how much, and what it cost.
@@ -2496,5 +3305,10 @@ model PurchaseReceiptItem {
   unitCost       Decimal         @default(0) @db.Decimal(14, 2)
   sortOrder      Int             @default(0)
 
+  /// The company this row belongs to. Every tenant-owned read is filtered by it.
+  companyId String  @default("")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([receiptId])
+  @@index([companyId])
 }
