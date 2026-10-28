@@ -21,7 +21,7 @@ export function AppHeader({ children }: { children?: React.ReactNode }) {
   const nav = findNavForPath(pathname);
 
   return (
-    <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-3 border-b bg-card/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-card/80 md:px-6">
+    <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-3 border-b bg-card/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-card/80 md:px-6 print:hidden">
       {/* Three zones of equal share keep the search centred whatever the breadcrumb says. */}
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
         <SidebarTrigger className="-ml-1 shrink-0" />

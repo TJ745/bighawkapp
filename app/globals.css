@@ -192,3 +192,43 @@
     @apply font-sans;
   }
 }
+/**
+ * Printing.
+ *
+ * Every printable screen sits inside the authenticated shell, so the sidebar, header and any
+ * banners used to land on the paper beside the receipt.
+ *
+ * Each piece of chrome now carries `print:hidden` of its own — `display: none`, at class
+ * specificity. The first attempt was cleverer and did not work: hiding everything with
+ * `visibility: hidden` and lifting `<main>` out of the flow left the header and the banners
+ * drawn over the receipt, because `visibility` is a weaker thing to rely on than removing the
+ * element. The cost of being explicit is that a **new bar added to the shell must be given
+ * `print:hidden` too**, which is why this note is here rather than a rule.
+ *
+ * `@page` is deliberately left alone: the till receipt is 80 mm and everything else that prints
+ * is a server-rendered PDF, so there is no one page size to set here.
+ */
+@media print {
+  /* Nothing should be clipped or scrolled away on paper. */
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+  }
+
+  /**
+   * The sidebar is the one piece of chrome we cannot label from our own code: shadcn puts a
+   * passed `className` on its inner container, and the wrapper around it also holds a
+   * `sidebar-gap` spacer that reserves the sidebar's width. Hiding the container alone would
+   * print the receipt pushed a sidebar's width to the right, which looks like a margin bug
+   * rather than a missing rule. `data-slot` is the component's documented hook, so the whole
+   * wrapper goes in one.
+   *
+   * `!important` on purpose: the wrapper carries `md:block`, and paper is wide enough to count
+   * as `md`. This is a rule fighting a utility class, and losing quietly is how the first
+   * attempt at this failed.
+   */
+  [data-slot="sidebar"] {
+    display: none !important;
+  }
+}

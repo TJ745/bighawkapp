@@ -43,7 +43,7 @@ export function DemoBar({ canReset }: { canReset: boolean }) {
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-purple-200 bg-purple-50 px-4 py-1.5 text-xs text-purple-900 md:px-6 dark:border-purple-900/50 dark:bg-purple-950/40 dark:text-purple-200">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-purple-200 bg-purple-50 px-4 py-1.5 text-xs text-purple-900 md:px-6 print:hidden dark:border-purple-900/50 dark:bg-purple-950/40 dark:text-purple-200">
         <FlaskConical className="size-3.5 shrink-0" />
         <span>
           <span className="font-medium">Demonstration company.</span> Nothing here is a real business, and it is rebuilt every night.

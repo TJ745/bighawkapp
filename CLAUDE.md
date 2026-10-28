@@ -867,6 +867,27 @@ Next.js 16 App Router · TypeScript · Tailwind v4 · shadcn/ui (Radix, `compone
 - Visual language (`app/globals.css`): cool grey canvas + white elevated cards (`--shadow-card`), radius `0.75rem`,
   and a tint palette (`--tint-blue|green|amber|red|purple` + `-foreground`) used for icon tiles and status pills.
   Use `StatCards` (icon tile + trend), `StatusBadge` tones, and `Card`/`Button` defaults rather than bespoke styling.
+- **Printing hides the shell, piece by piece.** Every printable screen sits inside the
+  authenticated layout, so pressing print put the sidebar, the header and whichever banners were
+  showing onto the paper beside the receipt. Each one now carries its own `print:hidden`, and
+  `<main>` carries `print:p-0`.
+  - The first attempt was cleverer and shipped broken: hide everything with
+    `visibility: hidden`, then show `main, main *`. **shadcn's `SidebarInset` is itself a
+    `<main>`**, and it wraps the header and the banners — so that selector put the entire shell
+    back, and lifting the inner `<main>` out of the flow drew the receipt on top of it. Two
+    `<main>` elements on a page is not a thing to assume away.
+  - The **sidebar** is the one piece that cannot be labelled from our own code: a `className`
+    passed to `Sidebar` lands on its inner container, while the wrapper also holds a
+    `sidebar-gap` spacer reserving the sidebar's width — hide the container alone and the
+    receipt prints pushed a sidebar to the right, which reads as a margin bug. It is hidden by
+    its documented `data-slot="sidebar"`, with `!important`, because the wrapper carries
+    `md:block` and paper is wide enough to count as `md`.
+  - A **new bar added to the shell must be given `print:hidden`**, which is the cost of being
+    explicit and the reason this note exists.
+  - `@page` is deliberately left alone: the till receipt is 80 mm and everything else that
+    prints is a server-rendered PDF, so there is no one page size to set.
+  - The till receipt (`/pos/sales/[id]/receipt`) opens in its own tab and calls `window.print()`
+    itself, so no dialog is ever open when this applies.
 - Shell scripts: avoid multi-heredoc Bash scripts here (the shell rejects them); write files with the Write tool.
 - Email: `renderEmailTemplate(key, vars)` + `sendEmail()` in `lib/email/mailer.ts`; templates are edited in Settings.
 - After changing `prisma/schema.prisma`: write a migration under `prisma/migrations`, run `prisma migrate deploy`,

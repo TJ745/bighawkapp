@@ -49,7 +49,7 @@ export function ActingAsBar({ context }: { context: OperatorContext }) {
 
   if (!context.chosen) {
     return (
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-900 md:px-6 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-900 md:px-6 print:hidden dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
         <TriangleAlert className="size-3.5 shrink-0" />
         <span>
           No company chosen, so you are seeing <span className="font-medium">{context.companyName}</span> by default.
@@ -62,7 +62,7 @@ export function ActingAsBar({ context }: { context: OperatorContext }) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b bg-muted/60 px-4 py-1.5 text-xs text-muted-foreground md:px-6">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b bg-muted/60 px-4 py-1.5 text-xs text-muted-foreground md:px-6 print:hidden">
       <Building2 className="size-3.5 shrink-0" />
       <span>
         Working on <span className="font-medium text-foreground">{context.companyName}</span>. Everything you change belongs to them.

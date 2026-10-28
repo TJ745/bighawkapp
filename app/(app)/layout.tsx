@@ -59,7 +59,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           </AppHeader>
           {isDemo ? <DemoBar canReset={auth.user.isSuperAdmin} /> : null}
           {operator ? <ActingAsBar context={operator} /> : null}
-          <main className="flex flex-1 flex-col gap-6 p-4 md:p-6 lg:p-8">{children}</main>
+          <main className="flex flex-1 flex-col gap-6 p-4 md:p-6 lg:p-8 print:p-0">{children}</main>
         </SidebarInset>
       </SidebarProvider>
     </FormatProvider>
