@@ -200,7 +200,9 @@ export async function createFinanceCategory(kind: FinanceCategoryKind, nameInput
     const auth = await authorize("FINANCE", "create");
     if (kind !== "INCOME" && kind !== "EXPENSE") throw new BusinessError("Invalid category kind.");
     const name = parseInput(categoryNameSchema, nameInput);
-    const existing = await db.financeCategory.findUnique({ where: { kind_name: { kind, name } } });
+    // `findFirst`, because the unique key is now per company and the tenant filter adds that
+    // half itself. Naming the company here by hand would be the one thing the filter forbids.
+    const existing = await db.financeCategory.findFirst({ where: { kind, name } });
     if (existing) {
       if (!existing.isActive) await db.financeCategory.update({ where: { id: existing.id }, data: { isActive: true } });
       return { id: existing.id, name: existing.name };

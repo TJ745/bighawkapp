@@ -133,7 +133,13 @@ carries a `companyId`, and no query says so.
   fills in. It is not a fallback: `''` is no company's id, so an unstamped write is refused by the
   foreign key.
 - Business identifiers are unique **per company** (`@@unique([companyId, number])` and friends), so
-  two customers can each have their own INV-2026-0001. Settings singletons are one row per company
+  two customers can each have their own INV-2026-0001. `FinanceCategory` was missed in that
+  sweep and stayed unique on `(kind, name)` platform-wide: the first customer to create an
+  expense category called "Rent" took the name from everybody else, who were told "a category
+  with this name already exists" about a row they had no way of seeing. Not a disclosure — one
+  customer silently blocking another, which is the quieter half of the same mistake. A unique
+  index on a tenant-owned model that does not start with `companyId`, or with a parent that is
+  itself company-scoped, is a bug. Settings singletons are one row per company
   (`@@unique([companyId])`), no longer `id: "default"`.
 - **Hand-written SQL is not filtered** — the extension rewrites Prisma's operations, not ours. The
   three statements that exist (`numbering.ts` and `pos-counter.ts` locking `FOR UPDATE`, the
@@ -200,6 +206,31 @@ carries a `companyId`, and no query says so.
   looks exactly like a working one from the operator's list. The password is typed by the
   operator and passed on; there is no invitation email, because a company created a minute ago
   has no mail server configured and an administrator who cannot sign in has nowhere to set one up.
+- **The demonstration company** (`Company.isDemo`, `prisma/demo-seed.ts`, `npm run demo:reset`)
+  is what a salesperson shows a prospect: one customer, "Al Noor Group", running four shops so
+  that a single sign-in and the branch switcher walk through most of the POS — a restaurant
+  (tables, kitchen, modifiers), a cafe (collection numbers), a boutique (barcodes, variants) and
+  a salon (appointments, commission) — with Business Management on top.
+  - **It never sends email.** `sendEmail()` refuses for a demo company, checked once centrally
+    rather than at each call site. `getSmtpConfig()` falls back to the deployment's own
+    `SMTP_*` variables when a company has filled none in, so without this a prospect clicking
+    "send invoice" would post real mail, to any address they typed, from our server — and
+    nothing on screen would say it had happened.
+  - **Every date is counted back from today.** A demo whose newest invoice is from March reads
+    as abandoned, and it is the first thing anybody notices.
+  - **The money is made by the real engines** — `createSale` for takings, `buildItemRows` for
+    invoice lines. Rows written by hand would give figures the app's own reports disagree with,
+    and the demo would contradict itself on screen in front of the prospect.
+  - It deliberately contains the states that sell the software: an overdue invoice, a part-paid
+    one, a draft, stock under its minimum. Aging, receivables, statements and the dashboard's
+    "needs attention" are the best arguments in the product and every one is blank without them.
+  - **Rebuilding takes minutes, not seconds** — measured at ~8 from a laptop against Neon,
+    because each sale is its own transaction and each is a round trip. The nightly
+    `npm run demo:reset` is the dependable path; the **Reset now** button in the banner is
+    Super Admin only and hands the work to `after()` rather than making a request wait for it.
+  - The wipe is guarded twice, by handle and by `isDemo`, and deletes users explicitly —
+    deleting a company only nulls their `companyId`, so the next run would collide on the email
+    address while leaving orphans behind.
 - **The operator's home is the companies list, not a dashboard.** They belong to no company, so
   until they choose one the scope falls back to the oldest and every figure would be somebody's
   presented as if it were theirs — so `/dashboard` sends them to Settings → Companies. That
@@ -248,6 +279,35 @@ carries a `companyId`, and no query says so.
     shown when **any** child is, which is what lets a kitchen hand see the POS section at all.
     `visibleNavItems` never renders an empty section — that invariant is what makes dropping the
     parent's own permission check safe, and it is tested.
+- **`Item.branchId` says which shop sells it; null means every shop.** The till used the branch
+  only to look up a stock figure, so a company running a restaurant and a salon put hairdressing
+  on the restaurant's screen — a till nobody could work from. `listRegisterItems` now filters
+  `OR: [{ branchId: null }, { branchId }]`.
+  - Null rather than a required choice, because most companies sell the same things everywhere
+    and a field they must answer for every item is a tax on the common case. The picker, and the
+    catalogue list's **Sold at** column, both appear only where there is more than one branch:
+    "sold at our only shop" is not a question, and a column of identical values is noise. The
+    column is not optional where it does apply — without it a manager who has pinned items has
+    to open each one to find out which.
+  - Narrowing the picker is never the check — `assertItemBranch` in `actions/items.ts` refuses a
+    branch that is closed or belongs to another customer, because an item pinned to one would
+    simply stop appearing on every till with nothing on screen to explain why.
+  - **The till's category tabs are derived from the items it offers**, not read separately. They
+    were a company-wide query, so a salon till carried empty "Food" and "Clothing" tabs that
+    showed nothing when tapped. Derived rather than filtered alongside, so the two cannot drift
+    apart again; the fetched list is *filtered* rather than rebuilt from the items, which keeps
+    the manager's own `sortOrder` instead of going alphabetical.
+  - **The catalogue list follows `User.branchId`, not the branch switcher.** Permissions say what
+    somebody may do; the pin says where. Someone pinned to one shop sees that shop's items plus
+    the ones sold everywhere — a salon manager has no use for a page of mixed grills. A company
+    admin is pinned to nothing, sees all of it, and has the **Sold at** column to tell them
+    apart, because maintaining every shop's catalogue is their job. The condition is **AND**-ed
+    on: the search already puts an `OR` on that object and a second would silently replace it.
+  - The **till stays single-branch for everybody**, admin included: nothing is sold at "all
+    branches", so there is no version of that screen where the distinction means anything.
+  - `ItemCategory` deliberately gets no branch. "Drinks" is genuinely shared between a
+    restaurant and a cafe, and pinning categories would mean the same name four times and four
+    sets of figures to reconcile. What a person sees is derived from the items they can see.
 - A variant that already has movements is **deactivated, never deleted**, when dropped from the form.
 - **`BARCODE` and `VARIANTS`** shape the item form and the till, rather than adding pages of their own:
   - `BARCODE` (retail, grocery, apparel, bakery, repair, wholesale, cinema) puts **Barcode and SKU**

@@ -11,7 +11,12 @@ import { round2 } from "@/lib/business/totals";
 /** The catalogue as the register needs it: priced, in stock, searchable by name/SKU/barcode. */
 export async function listRegisterItems(branchId: string) {
   const variants = await db.itemVariant.findMany({
-    where: { isActive: true, item: { isActive: true } },
+    /**
+     * `branchId: null` is "sold everywhere", which is what almost every item is. The branch
+     * used to decide only which stock figure to show, so a company running a restaurant and a
+     * salon put hairdressing on the restaurant's till — a screen nobody could sell from.
+     */
+    where: { isActive: true, item: { isActive: true, OR: [{ branchId: null }, { branchId }] } },
     orderBy: [{ item: { name: "asc" } }, { sortOrder: "asc" }],
     include: {
       item: {

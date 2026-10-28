@@ -66,7 +66,31 @@ async function fromAddress(config: SmtpConfig) {
 }
 
 /** Sends a plain-text email using the SMTP settings from Settings → Email. */
+/**
+ * A demonstration company never sends mail.
+ *
+ * Checked here rather than at each call site, because every one of them would have to remember.
+ * The SMTP settings **fall back to the deployment's own** environment variables when a company
+ * has filled none in, so without this a prospect clicking "send invoice" during a demo would
+ * post real email, to whatever address they typed, from our server. Nothing about that is
+ * visible on screen until it has happened.
+ */
+async function assertNotDemo() {
+  const { activeCompanyId } = await import("@/lib/db/tenant-scope");
+  const { db } = await import("@/lib/db");
+  const { runAsPlatform } = await import("@/lib/db/tenant");
+  const companyId = await activeCompanyId();
+  if (!companyId) return;
+  const company = await runAsPlatform("checking a company may send email", () =>
+    db.company.findUnique({ where: { id: companyId }, select: { isDemo: true } }),
+  );
+  if (company?.isDemo) {
+    throw new BusinessError("This is a demonstration company, so it does not send email. Everything else works normally.");
+  }
+}
+
 export async function sendEmail(input: { to: string; subject: string; text: string; attachments?: EmailAttachment[] }) {
+  await assertNotDemo();
   const config = await getSmtpConfig();
   if (!isSmtpUsable(config)) {
     throw new BusinessError("Email is not configured. Ask your administrator to set up SMTP in Settings → Email.");

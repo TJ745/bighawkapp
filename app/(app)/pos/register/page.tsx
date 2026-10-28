@@ -52,6 +52,19 @@ export default async function RegisterPage({ searchParams }: PageProps<"/pos/reg
   ]);
 
   /**
+   * The category tabs follow the items this till actually offers.
+   *
+   * The catalogue is filtered to the branch, but the categories were read company-wide, so a
+   * salon till carried empty "Food" and "Clothing" tabs that showed nothing when tapped. Derived
+   * from the items rather than filtered alongside them, so the two cannot drift apart again.
+   *
+   * The manager's own ordering is kept by filtering the fetched list rather than collecting
+   * names off the items, which would come out alphabetical and ignore `sortOrder`.
+   */
+  const offeredCategoryIds = new Set(items.map((item) => item.categoryId).filter((id): id is string => Boolean(id)));
+  const tabs = categories.filter((c) => offeredCategoryIds.has(c.id)).map((c) => ({ id: c.id, name: c.name }));
+
+  /**
    * An open bill arrives here as a link: `?order=` picks one back up, `?table=` starts a dine-in
    * order, `?tab=` starts a named bar tab. All three are re-checked against this branch and its
    * industry, because a URL is a request, not permission.
@@ -111,7 +124,7 @@ export default async function RegisterPage({ searchParams }: PageProps<"/pos/reg
         items={items}
         scale={scale}
         itemModifiers={itemModifiers}
-        categories={categories.map((c) => ({ id: c.id, name: c.name }))}
+        categories={tabs}
         customers={customers}
         registers={registers}
         parked={parked}

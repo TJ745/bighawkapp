@@ -97,3 +97,20 @@ export async function operatorContext(): Promise<OperatorContext | null> {
   if (companies.length === 0) return null;
   return { companyName: companies[0]?.name ?? "", chosen: false };
 }
+
+/**
+ * Whether the company in force is a demonstration, for the banner every screen carries.
+ *
+ * Shown to **everybody** in that company, not only the operator: a salesperson's prospect is
+ * looking at the screen too, and the one thing they must not conclude is that these are real
+ * figures for a real business.
+ */
+export async function demoNotice(): Promise<boolean> {
+  const { activeCompanyId } = await import("@/lib/db/tenant-scope");
+  const companyId = await activeCompanyId();
+  if (!companyId) return false;
+  const company = await runAsPlatform("checking whether this is the demonstration company", () =>
+    db.company.findUnique({ where: { id: companyId }, select: { isDemo: true } }),
+  );
+  return company?.isDemo ?? false;
+}

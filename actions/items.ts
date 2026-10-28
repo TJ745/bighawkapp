@@ -138,7 +138,22 @@ function itemRow(input: ItemValues) {
     trackStock: input.trackStock,
     durationMinutes: input.durationMinutes,
     isActive: input.isActive,
+    branchId: input.branchId,
   };
+}
+
+/**
+ * A branch the client named has to exist and be open.
+ *
+ * Narrowing the picker is never the check: the id arrives in a form, and an item pinned to a
+ * branch that is closed or belongs to another customer would simply stop appearing on any till
+ * with nothing to explain why.
+ */
+async function assertItemBranch(branchId: string | null) {
+  if (!branchId) return;
+  const branch = await db.branch.findFirst({ where: { id: branchId }, select: { isActive: true, name: true } });
+  if (!branch) throw new BusinessError("That branch no longer exists.");
+  if (!branch.isActive) throw new BusinessError(`${branch.name} is not in use, so nothing can be sold only there.`);
 }
 
 function parseItemForm(formData: FormData) {
@@ -159,6 +174,7 @@ export async function createItem(formData: FormData): Promise<ActionResult<{ id:
     const input = parseItemForm(formData);
     // A brand-new item has nothing to keep, so anything beyond one variant is an addition.
     await assertVariantsAllowed(input.variants.length, 0);
+    await assertItemBranch(input.branchId);
     if (input.code) {
       const clash = await db.item.findFirst({ where: { code: input.code }, select: { id: true } });
       if (clash) throw new BusinessError("An item with this code already exists.");
@@ -213,6 +229,7 @@ export async function updateItem(itemId: string, formData: FormData): Promise<Ac
     const current = await db.item.findUnique({ where: { id: itemId }, select: { id: true, imageKey: true, code: true } });
     if (!current) throw new BusinessError("Item not found.");
     await assertVariantsAllowed(input.variants.length, await db.itemVariant.count({ where: { itemId } }));
+    await assertItemBranch(input.branchId);
     if (input.code && input.code !== current.code) {
       const clash = await db.item.findFirst({ where: { code: input.code }, select: { id: true } });
       if (clash && clash.id !== itemId) throw new BusinessError("An item with this code already exists.");

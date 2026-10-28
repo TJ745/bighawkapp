@@ -52,6 +52,13 @@ type Props = {
   scansCodes?: boolean;
   weighsGoods?: boolean;
   sellsVariants?: boolean;
+  /**
+   * The company's open branches, for pinning an item to one.
+   *
+   * Empty, or a single branch, and the field is not shown at all: "sold at our only shop" is
+   * not a choice anybody should have to make.
+   */
+  branches?: { id: string; name: string }[];
 };
 
 function emptyVariant(name: string): VariantRow {
@@ -84,6 +91,7 @@ export function ItemForm({
   scansCodes = false,
   weighsGoods = false,
   sellsVariants = false,
+  branches = [],
 }: Props) {
   const router = useRouter();
   const isEdit = Boolean(item);
@@ -94,6 +102,7 @@ export function ItemForm({
   const [name, setName] = useState(item?.name ?? "");
   const [code, setCode] = useState(item?.code ?? "");
   const [categoryId, setCategoryId] = useState(item?.categoryId ?? "");
+  const [itemBranchId, setItemBranchId] = useState(item?.branchId ?? "");
   const [brand, setBrand] = useState(item?.brand ?? "");
   const [description, setDescription] = useState(item?.description ?? "");
   const [unit, setUnit] = useState(item?.unit ?? "pcs");
@@ -196,6 +205,7 @@ export function ItemForm({
       formData.set("name", name);
       formData.set("code", code);
       formData.set("categoryId", categoryId);
+      formData.set("branchId", itemBranchId);
       formData.set("brand", brand);
       formData.set("description", description);
       formData.set("unit", unit);
@@ -328,6 +338,27 @@ export function ItemForm({
                 </SelectContent>
               </Select>
             </FormField>
+            {branches.length > 1 ? (
+              <FormField
+                label="Sold at"
+                htmlFor="item-branch"
+                description="Which till offers this. Leave as every branch unless only one shop sells it."
+              >
+                <Select value={itemBranchId || "all"} onValueChange={(v) => setItemBranchId(v === "all" ? "" : v)}>
+                  <SelectTrigger id="item-branch" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Every branch</SelectItem>
+                    {branches.map((branch) => (
+                      <SelectItem key={branch.id} value={branch.id}>
+                        {branch.name} only
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FormField>
+            ) : null}
             {!isService ? (
               <FormField label="Brand" htmlFor="item-brand">
                 <Input id="item-brand" value={brand} onChange={(e) => setBrand(e.target.value)} autoComplete="off" />

@@ -16,6 +16,7 @@
     "db:studio": "prisma studio",
     "test": "npm run test:unit && npm run test:engines",
     "db:test:setup": "node tests/setup-database.mjs",
+    "demo:reset": "node --env-file=.env --conditions=react-server --import tsx prisma/demo-reset.ts",
     "test:unit": "node --import tsx --test \"lib/**/*.test.ts\"",
     "test:engines": "node --conditions=react-server --import tsx --import ./tests/preload.mjs --test-isolation=none --test-concurrency=1 --test \"tests/engines/**/*.test.ts\""
   },

@@ -80,6 +80,11 @@ export const itemSchema = z
       .nullish()
       .transform((v) => (v === "" || v === null || v === undefined ? null : Number(v))),
     isActive: z.boolean().default(true),
+    /** Blank means every branch, which is the common case and so the default. */
+    branchId: z
+      .string()
+      .nullish()
+      .transform((v) => (v ? v : null)),
     variants: z.array(itemVariantSchema).min(1, "At least one variant is required"),
   })
   .superRefine((value, ctx) => {

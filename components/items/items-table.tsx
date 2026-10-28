@@ -29,9 +29,17 @@ type Props = {
   canCreate: boolean;
   canEdit: boolean;
   branchName: string;
+  /**
+   * Whether to show which branch sells each item.
+   *
+   * Only where there is more than one: on a single-branch company the answer is the same on
+   * every row, and a column of identical values is noise. Without it, a manager who has pinned
+   * items to branches cannot tell which is which without opening each one.
+   */
+  showBranch?: boolean;
 };
 
-export function ItemsTable({ items, total, page, hasQuery, canCreate, canEdit, branchName }: Props) {
+export function ItemsTable({ items, total, page, hasQuery, canCreate, canEdit, branchName, showBranch = false }: Props) {
   const format = useFormat();
 
   const newButton = canCreate ? (
@@ -65,6 +73,7 @@ export function ItemsTable({ items, total, page, hasQuery, canCreate, canEdit, b
               <TableRow>
                 <TableHead>Item</TableHead>
                 <TableHead className="hidden md:table-cell">Category</TableHead>
+                {showBranch ? <TableHead className="hidden lg:table-cell">Sold at</TableHead> : null}
                 <TableHead className="hidden lg:table-cell">Variants</TableHead>
                 <TableHead className="text-right">Price</TableHead>
                 <TableHead className="text-right">{`Stock · ${branchName}`}</TableHead>
@@ -99,6 +108,9 @@ export function ItemsTable({ items, total, page, hasQuery, canCreate, canEdit, b
                     </div>
                   </TableCell>
                   <TableCell className="hidden text-muted-foreground md:table-cell">{item.category?.name ?? "—"}</TableCell>
+                  {showBranch ? (
+                    <TableCell className="hidden text-muted-foreground lg:table-cell">{item.branch?.name ?? "Every branch"}</TableCell>
+                  ) : null}
                   <TableCell className="hidden text-muted-foreground lg:table-cell">
                     {item.variantCount > 1 ? `${item.variantCount} variants` : "—"}
                   </TableCell>

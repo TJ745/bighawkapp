@@ -49,6 +49,14 @@ model Company {
   /// Short, stable handle for logs and support, unique across the platform.
   slug      String   @unique
   isActive  Boolean  @default(true)
+  /// A demonstration company, not a paying customer.
+  ///
+  /// Three things follow from it, and the first is not cosmetic: a demo company must never send
+  /// email. `getSmtpConfig()` falls back to the deployment's own `SMTP_*` variables when a
+  /// company has set none, so without this a prospect clicking "send invoice" would post real
+  /// mail, to any address they typed, from our server. It also puts a banner on every screen and
+  /// is the only thing the nightly reset is allowed to delete.
+  isDemo    Boolean  @default(false)
   /// How many people this customer has bought, the administrator included: "five users" means
   /// five accounts, not five plus one. Counted over **active** users only, so deactivating
   /// somebody frees the seat. Set by the BigHawk operator; the customer can only read it.
@@ -1429,7 +1437,10 @@ model FinanceCategory {
   companyId String  @default("")
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  @@unique([kind, name])
+  /// Per company, like every other business identifier. Globally unique, the first customer to
+  /// name a category "Rent" took that name from everybody else — and the refusal they saw spoke
+  /// about a row they cannot see.
+  @@unique([companyId, kind, name])
   @@index([companyId])
 }
 
@@ -1605,6 +1616,8 @@ model Branch {
   isActive         Boolean            @default(true)
   // The branch used when nobody has chosen one; exactly one branch carries this.
   isDefault        Boolean            @default(false)
+  /// Items sold only here. Most items belong to no branch and are sold everywhere.
+  items     Item[]
   posConfig        PosConfiguration?
   stockLevels      StockLevel[]
   stockMovements   StockMovement[]
@@ -1779,6 +1792,16 @@ model Item {
   /// Service length, for industries that book time (salon, spa, repair labour).
   durationMinutes Int?
   isActive        Boolean             @default(true)
+  /// The branch that sells this, or **null for every branch**.
+  ///
+  /// A company may run shops of different kinds — a restaurant, a salon, a retail unit — and
+  /// the till showed all of them the whole catalogue, because the branch only ever decided which
+  /// stock figure to look up. A hairdresser scrolling past pizzas is not a shop anybody runs.
+  ///
+  /// Null rather than a required choice: most companies sell the same things everywhere, and a
+  /// field they must fill in for every item to get that is a tax on the common case.
+  branchId        String?
+  branch          Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
   variants        ItemVariant[]
   modifierGroups  ItemModifierGroup[]
   createdById     String?
@@ -1791,6 +1814,7 @@ model Item {
 
   @@unique([companyId, code])
   @@index([kind, isActive])
+  @@index([branchId])
   @@index([categoryId])
   @@index([name])
   @@index([companyId])

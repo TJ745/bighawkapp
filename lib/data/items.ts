@@ -6,6 +6,7 @@ import { getStockLevels, round3 } from "@/lib/business/inventory";
 import { num } from "@/lib/decimal";
 import { round2 } from "@/lib/business/totals";
 import { paginate, type ListParams } from "@/lib/list-params";
+import { allowedBranchIds } from "@/lib/auth/current-user";
 
 /** Catalogue reads. Stock always comes from one branch — the one the user is working in. */
 
@@ -34,8 +35,24 @@ function itemWhere(params: ListParams, categoryId?: string): Prisma.ItemWhereInp
   };
 }
 
+/**
+ * The catalogue, as the signed-in person is allowed to see it.
+ *
+ * Permissions say what somebody may do; `User.branchId` says where. A person pinned to one shop
+ * is shown that shop's items and the ones sold everywhere — a salon manager has no use for a
+ * page of mixed grills, and `allowedBranchIds()` already decides this everywhere else in the
+ * app. A company admin is pinned to nothing and sees the lot, with the "Sold at" column to tell
+ * them apart, because maintaining every shop's catalogue is their job.
+ *
+ * Combined with **AND**, not merged into the existing `where`: the search already puts an `OR`
+ * on that object, and a second one would silently replace the first — a filter that returns the
+ * wrong rows with nothing to show it went wrong.
+ */
 export async function listItems(params: ListParams, branchId: string, categoryId?: string) {
-  const where = itemWhere(params, categoryId);
+  const allowed = await allowedBranchIds();
+  const base = itemWhere(params, categoryId);
+  const where: Prisma.ItemWhereInput =
+    allowed === null ? base : { AND: [base, { OR: [{ branchId: null }, { branchId: { in: allowed } }] }] };
   const [rows, total] = await Promise.all([
     db.item.findMany({
       where,
@@ -43,6 +60,8 @@ export async function listItems(params: ListParams, branchId: string, categoryId
       ...paginate(params),
       include: {
         category: { select: { id: true, name: true } },
+        // Null for almost everything, which the list reads as "every branch".
+        branch: { select: { id: true, name: true } },
         variants: { where: { isActive: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] },
       },
     }),
@@ -78,6 +97,7 @@ export async function listItems(params: ListParams, branchId: string, categoryId
       trackStock: item.trackStock,
       durationMinutes: item.durationMinutes,
       category: item.category,
+      branch: item.branch,
       variants,
       variantCount: variants.length,
       totalStock,
